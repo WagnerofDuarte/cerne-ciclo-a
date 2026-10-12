@@ -8,4 +8,5 @@ class AppRoutes {
   static const String home = '/home';
   static const String records = '/records';
   static const String settings = '/settings';
+  static const String vault = '/vault';
 }

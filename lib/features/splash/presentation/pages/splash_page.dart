@@ -35,7 +35,7 @@ class _SplashPageState extends State<SplashPage> {
         listener: (context, status) {
           switch (status) {
             case SessionStatusAuthenticated():
-              context.push(AppRoutes.home);
+              context.push(AppRoutes.vault);
             case SessionStatusUnauthenticated():
               context.push(AppRoutes.login);
             case SessionStatusChecking():
@@ -46,26 +46,31 @@ class _SplashPageState extends State<SplashPage> {
         },
         builder: (context, status) {
           final isNetworkError = status is SessionStatusNetworkError;
-          return Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
+          return Stack(
+            children: [
+              Center(
+                child: Text(
                   'Cerne',
                   style: DesignTokens.textDisplayLg.copyWith(
                     color: DesignTokens.colorOnPrimary,
                   ),
                 ),
-                const SizedBox(height: DesignTokens.spacingLg),
-                if (isNetworkError)
-                  _RetryPrompt(
-                    onRetry: () =>
-                        context.read<SessionBloc>().add(const AppStarted()),
-                  )
-                else
-                  const _LoadingDots(),
-              ],
-            ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: DesignTokens.spacingXl,
+                child: Center(
+                  child: isNetworkError
+                      ? _RetryPrompt(
+                          onRetry: () => context
+                              .read<SessionBloc>()
+                              .add(const AppStarted()),
+                        )
+                      : const _LoadingDots(),
+                ),
+              ),
+            ],
           );
         },
       ),

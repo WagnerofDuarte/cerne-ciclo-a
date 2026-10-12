@@ -4,6 +4,7 @@ import 'package:cerne/core/theme.dart';
 import 'package:cerne/features/session/domain/entities/session_status.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
 import 'package:cerne/features/session/presentation/widgets/session_expired_overlay.dart';
+import 'package:cerne/features/vault/presentation/widgets/vault_lifecycle_observer.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -35,12 +36,14 @@ class CerneApp extends StatelessWidget {
         theme: AppTheme.theme,
         routerConfig: appRouter,
         builder: (context, child) {
-          return BlocListener<SessionBloc, SessionStatus>(
-            listenWhen: (previous, current) =>
-                current is SessionStatusExpiredRenewable,
-            listener: (context, status) =>
-                showSessionExpiredOverlay(rootNavigatorKey),
-            child: child,
+          return VaultLifecycleObserver(
+            child: BlocListener<SessionBloc, SessionStatus>(
+              listenWhen: (previous, current) =>
+                  current is SessionStatusExpiredRenewable,
+              listener: (context, status) =>
+                  showSessionExpiredOverlay(rootNavigatorKey),
+              child: child,
+            ),
           );
         },
       ),

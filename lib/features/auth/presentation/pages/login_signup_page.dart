@@ -103,7 +103,7 @@ class _LoginSignupPageState extends State<LoginSignupPage> {
               } else {
                 // research.md R3: context.push, never go/replace, so the
                 // login screen's State is never disposed underneath Home/Chat.
-                context.push(AppRoutes.home);
+                context.push(AppRoutes.vault);
               }
             }
           },
@@ -119,68 +119,130 @@ class _LoginSignupPageState extends State<LoginSignupPage> {
                   const SizedBox(height: DesignTokens.spacing2xl),
                   Text(
                     isSignUp ? 'Crie sua conta' : 'Bem-vindo de volta',
-                    style: DesignTokens.textHeadlineMd,
+                    style: DesignTokens.textTitleLg,
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: DesignTokens.spacingXl),
-                  TextField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    enabled: !isLoading,
-                    decoration: const InputDecoration(labelText: 'E-mail'),
-                  ),
-                  const SizedBox(height: DesignTokens.spacingMd),
-                  TextField(
-                    controller: _passwordController,
-                    obscureText: true,
-                    enabled: !isLoading,
-                    decoration: const InputDecoration(labelText: 'Senha'),
-                  ),
-                  if (_localValidationError != null) ...[
-                    const SizedBox(height: DesignTokens.spacingSm),
-                    Text(
-                      _localValidationError!,
-                      style: DesignTokens.textBodyMd.copyWith(
-                        color: DesignTokens.colorError,
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(DesignTokens.spacingLg),
+                    decoration: BoxDecoration(
+                      color: DesignTokens.colorSurfaceElevated,
+                      borderRadius:
+                          BorderRadius.circular(DesignTokens.radiusMd),
+                      border: Border.all(color: DesignTokens.colorBorder),
+                      boxShadow: DesignTokens.elevation1,
                     ),
-                  ],
-                  if (state.status == AuthStatus.failure &&
-                      state.failure != null) ...[
-                    const SizedBox(height: DesignTokens.spacingSm),
-                    Text(
-                      _messageFor(state.failure!),
-                      style: DesignTokens.textBodyMd.copyWith(
-                        color: DesignTokens.colorError,
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: DesignTokens.spacingLg),
-                  ElevatedButton(
-                    onPressed: isLoading
-                        ? null
-                        : () => _onSubmit(state.formMode),
-                    child: _showLoadingIndicator
-                        ? const SizedBox(
-                            height: DesignTokens.sizeLoadingIndicator,
-                            width: DesignTokens.sizeLoadingIndicator,
-                            child: CircularProgressIndicator(
-                              strokeWidth: DesignTokens.strokeWidthLoadingIndicator,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'E-mail',
+                          style: DesignTokens.textLabelMd.copyWith(
+                            color: DesignTokens.colorTextSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: DesignTokens.spacingXs),
+                        TextField(
+                          controller: _emailController,
+                          keyboardType: TextInputType.emailAddress,
+                          enabled: !isLoading,
+                          decoration: const InputDecoration(
+                            hintText: 'voce@email.com',
+                          ),
+                        ),
+                        const SizedBox(height: DesignTokens.spacingMd),
+                        Text(
+                          'Senha',
+                          style: DesignTokens.textLabelMd.copyWith(
+                            color: DesignTokens.colorTextSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: DesignTokens.spacingXs),
+                        TextField(
+                          controller: _passwordController,
+                          obscureText: true,
+                          enabled: !isLoading,
+                          decoration: const InputDecoration(
+                            hintText: '••••••••',
+                          ),
+                        ),
+                        if (_localValidationError != null) ...[
+                          const SizedBox(height: DesignTokens.spacingSm),
+                          Text(
+                            _localValidationError!,
+                            style: DesignTokens.textBodyMd.copyWith(
+                              color: DesignTokens.colorError,
                             ),
-                          )
-                        : Text(isSignUp ? 'Criar conta' : 'Entrar'),
+                          ),
+                        ],
+                        if (state.status == AuthStatus.failure &&
+                            state.failure != null) ...[
+                          const SizedBox(height: DesignTokens.spacingSm),
+                          Text(
+                            _messageFor(state.failure!),
+                            style: DesignTokens.textBodyMd.copyWith(
+                              color: DesignTokens.colorError,
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: DesignTokens.spacingSm),
+                        ElevatedButton(
+                          onPressed: isLoading
+                              ? null
+                              : () => _onSubmit(state.formMode),
+                          child: _showLoadingIndicator
+                              ? const SizedBox(
+                                  height: DesignTokens.sizeLoadingIndicator,
+                                  width: DesignTokens.sizeLoadingIndicator,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: DesignTokens
+                                        .strokeWidthLoadingIndicator,
+                                  ),
+                                )
+                              : Text(isSignUp ? 'Criar conta' : 'Entrar'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: DesignTokens.spacingLg),
+                  Center(
+                    child: GestureDetector(
+                      onTap: isLoading
+                          ? null
+                          : () => context
+                              .read<AuthBloc>()
+                              .add(const ToggleModeRequested()),
+                      child: Text.rich(
+                        TextSpan(
+                          text: isSignUp ? 'Já tem conta? ' : 'Não tem conta? ',
+                          style: DesignTokens.textBodyMd.copyWith(
+                            color: DesignTokens.colorTextSecondary,
+                          ),
+                          children: [
+                            TextSpan(
+                              text: isSignUp ? 'Entrar' : 'Criar conta',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: DesignTokens.colorPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(height: DesignTokens.spacingMd),
-                  TextButton(
-                    onPressed: isLoading
-                        ? null
-                        : () => context
-                            .read<AuthBloc>()
-                            .add(const ToggleModeRequested()),
-                    child: Text(
-                      isSignUp
-                          ? 'Já tenho uma conta — Entrar'
-                          : 'Não tenho conta — Criar conta',
+                  Center(
+                    child: GestureDetector(
+                      onTap: isLoading
+                          ? null
+                          : () => context.push(AppRoutes.vault),
+                      child: Text(
+                        'usar biometria',
+                        style: DesignTokens.textMonoCaption.copyWith(
+                          color: DesignTokens.colorTextSecondary,
+                        ),
+                      ),
                     ),
                   ),
                 ],

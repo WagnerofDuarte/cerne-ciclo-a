@@ -114,6 +114,10 @@ class DesignTokens {
   static const double strokeWidthLoadingIndicator = 2;
   static const double dividerThickness = 1;
   static const double borderWidthFocused = 1.5;
+  static const double sizeKeypadTapTarget = 56;
+  static const double sizeProgressDot = 10;
+  static const double sizeBiometricIconContainer = 96;
+  static const double sizeBiometricIcon = 44;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [
