@@ -118,6 +118,9 @@ class DesignTokens {
   static const double sizeProgressDot = 10;
   static const double sizeBiometricIconContainer = 96;
   static const double sizeBiometricIcon = 44;
+  static const double sizeAudioRecordButton = 72;
+  static const double sizeAudioRecordIcon = 30;
+  static const double sizePhotoTileIcon = 26;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [

@@ -28,6 +28,12 @@
 	<true/>
 	<key>NSFaceIDUsageDescription</key>
 	<string>Use Face ID para desbloquear o Cerne sem digitar seu PIN.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Use o microfone para registrar uma entrada de áudio no Cerne.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Use a câmera para capturar uma foto para uma entrada no Cerne.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Acesse suas fotos para capturar uma entrada no Cerne.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

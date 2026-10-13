@@ -1,4 +1,5 @@
 import 'package:cerne/core/network/api_client.dart';
+import 'package:cerne/core/network/connectivity_checker.dart';
 import 'package:cerne/core/storage/secure_token_storage.dart';
 import 'package:cerne/features/auth/data/auth_remote_data_source.dart';
 import 'package:cerne/features/auth/data/auth_repository_impl.dart';
@@ -6,6 +7,26 @@ import 'package:cerne/features/auth/domain/repositories/auth_repository.dart';
 import 'package:cerne/features/auth/domain/usecases/login_usecase.dart';
 import 'package:cerne/features/auth/domain/usecases/sign_up_usecase.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_bloc.dart';
+import 'package:cerne/features/capture/data/audio_capture_repository_impl.dart';
+import 'package:cerne/features/capture/data/audio_recorder_data_source.dart';
+import 'package:cerne/features/capture/data/audio_transcription_repository_impl.dart';
+import 'package:cerne/features/capture/data/image_picker_data_source.dart';
+import 'package:cerne/features/capture/data/media_ocr_remote_data_source.dart';
+import 'package:cerne/features/capture/data/photo_capture_repository_impl.dart';
+import 'package:cerne/features/capture/data/photo_recognition_repository_impl.dart';
+import 'package:cerne/features/capture/data/whisper_transcription_data_source.dart';
+import 'package:cerne/features/capture/domain/repositories/audio_capture_repository.dart';
+import 'package:cerne/features/capture/domain/repositories/audio_transcription_repository.dart';
+import 'package:cerne/features/capture/domain/repositories/photo_capture_repository.dart';
+import 'package:cerne/features/capture/domain/repositories/photo_recognition_repository.dart';
+import 'package:cerne/features/capture/domain/usecases/save_audio_entry_usecase.dart';
+import 'package:cerne/features/capture/domain/usecases/save_photo_entry_usecase.dart';
+import 'package:cerne/features/capture/domain/usecases/save_text_entry_usecase.dart';
+import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
+import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
+import 'package:cerne/features/entries/data/entries_repository_impl.dart';
+import 'package:cerne/features/entries/domain/repositories/entries_repository.dart';
+import 'package:cerne/features/entries/domain/usecases/create_entry_usecase.dart';
 import 'package:cerne/features/session/data/session_remote_data_source.dart';
 import 'package:cerne/features/session/data/session_repository_impl.dart';
 import 'package:cerne/features/session/domain/repositories/session_repository.dart';
@@ -138,6 +159,71 @@ void setupServiceLocator() {
       savePinUseCase: getIt<SavePinUseCase>(),
       saveBiometricsPreferenceUseCase: getIt<SaveBiometricsPreferenceUseCase>(),
       repository: getIt<VaultRepository>(),
+    ),
+  );
+
+  // Entries (P-RF01, research.md R8 — the shared entry-creation seam)
+  getIt.registerLazySingleton<ConnectivityChecker>(ConnectivityChecker.new);
+  getIt.registerLazySingleton<EntriesRemoteDataSource>(
+    () => EntriesRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<EntriesRepository>(
+    () => EntriesRepositoryImpl(getIt<EntriesRemoteDataSource>()),
+  );
+  getIt.registerLazySingleton<CreateEntryUseCase>(
+    () => CreateEntryUseCase(getIt<EntriesRepository>()),
+  );
+
+  // Capture (P-RF01)
+  getIt.registerLazySingleton<AudioRecorderDataSource>(
+    AudioRecorderDataSource.new,
+  );
+  getIt.registerLazySingleton<AudioCaptureRepository>(
+    () => AudioCaptureRepositoryImpl(getIt<AudioRecorderDataSource>()),
+  );
+  getIt.registerLazySingleton<WhisperTranscriptionDataSource>(
+    WhisperTranscriptionDataSource.new,
+  );
+  getIt.registerLazySingleton<AudioTranscriptionRepository>(
+    () => AudioTranscriptionRepositoryImpl(getIt<WhisperTranscriptionDataSource>()),
+  );
+  getIt.registerLazySingleton<ImagePickerDataSource>(ImagePickerDataSource.new);
+  getIt.registerLazySingleton<PhotoCaptureRepository>(
+    () => PhotoCaptureRepositoryImpl(getIt<ImagePickerDataSource>()),
+  );
+  getIt.registerLazySingleton<MediaOcrRemoteDataSource>(
+    () => MediaOcrRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<PhotoRecognitionRepository>(
+    () => PhotoRecognitionRepositoryImpl(getIt<MediaOcrRemoteDataSource>()),
+  );
+  getIt.registerLazySingleton<SaveTextEntryUseCase>(
+    () => SaveTextEntryUseCase(
+      createEntryUseCase: getIt<CreateEntryUseCase>(),
+      connectivityChecker: getIt<ConnectivityChecker>(),
+    ),
+  );
+  getIt.registerLazySingleton<SaveAudioEntryUseCase>(
+    () => SaveAudioEntryUseCase(
+      transcriptionRepository: getIt<AudioTranscriptionRepository>(),
+      createEntryUseCase: getIt<CreateEntryUseCase>(),
+      connectivityChecker: getIt<ConnectivityChecker>(),
+    ),
+  );
+  getIt.registerLazySingleton<SavePhotoEntryUseCase>(
+    () => SavePhotoEntryUseCase(
+      recognitionRepository: getIt<PhotoRecognitionRepository>(),
+      createEntryUseCase: getIt<CreateEntryUseCase>(),
+      connectivityChecker: getIt<ConnectivityChecker>(),
+    ),
+  );
+  getIt.registerFactory<InsertionModalBloc>(
+    () => InsertionModalBloc(
+      saveTextEntryUseCase: getIt<SaveTextEntryUseCase>(),
+      audioCaptureRepository: getIt<AudioCaptureRepository>(),
+      saveAudioEntryUseCase: getIt<SaveAudioEntryUseCase>(),
+      photoCaptureRepository: getIt<PhotoCaptureRepository>(),
+      savePhotoEntryUseCase: getIt<SavePhotoEntryUseCase>(),
     ),
   );
 }
