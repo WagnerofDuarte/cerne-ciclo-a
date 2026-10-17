@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cerne/core/design_tokens.dart';
 import 'package:cerne/features/capture/domain/repositories/photo_capture_repository.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
@@ -10,13 +12,15 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 const _permissionDeniedMessage =
     'Permita o acesso à câmera ou às fotos para continuar.';
 
-/// Two compact tiles, "Câmera" and "Galeria", with no image selected yet, for
-/// [InsertionModalFotoCaptura] (FR-005); the permission-denied message; the
-/// plain generic loading indicator for [InsertionModalFotoSaving] (FR-007);
-/// a plain failure message plus one generic retry action for
-/// [InsertionModalFotoFailure], deliberately not reproducing the
-/// prototype's named "Foto — Erro" styling/copy or its "Salvar só a foto"
-/// action (research.md R11).
+/// Two compact tiles, "Câmera" and "Galeria", with no image selected yet,
+/// for [InsertionModalFotoCaptura] (FR-005); the permission-denied message;
+/// a thumbnail with a spinner for [InsertionModalFotoProcessing]; a
+/// thumbnail next to an editable review field for
+/// [InsertionModalFotoReconhecido]/[InsertionModalFotoSaveFailure]
+/// (FR-006/FR-009); the plain generic loading indicator for
+/// [InsertionModalFotoSaving]; and [RecognitionErrorView] with its second
+/// action, "Salvar só a foto", for [InsertionModalFotoFailure] (FR-007/
+/// FR-008).
 class FotoTabView extends StatelessWidget {
   const FotoTabView({required this.state, super.key});
 
@@ -39,16 +43,165 @@ class FotoTabView extends StatelessWidget {
               const CapturePermissionDeniedMessage(
                 message: _permissionDeniedMessage,
               ),
-            InsertionModalFotoSaving() => const CaptureLoadingIndicator(),
-            InsertionModalFotoFailure(message: final message) =>
-              CaptureFailureBand(
+            InsertionModalFotoProcessing(imagePath: final imagePath) =>
+              _ProcessingView(imagePath: imagePath),
+            InsertionModalFotoReconhecido(
+              imagePath: final imagePath,
+              text: final text,
+            ) =>
+              _ReviewView(
+                imagePath: imagePath,
+                text: text,
+                message: null,
+                onTextChanged: (value) =>
+                    bloc.add(PhotoReviewTextChanged(value)),
+                onSave: () => bloc.add(const PhotoSaveConfirmed()),
+              ),
+            InsertionModalFotoSaveFailure(
+              imagePath: final imagePath,
+              text: final text,
+              message: final message,
+            ) =>
+              _ReviewView(
+                imagePath: imagePath,
+                text: text,
                 message: message,
-                onRetry: () => bloc.add(const RetryRequested()),
+                onTextChanged: (value) =>
+                    bloc.add(PhotoReviewTextChanged(value)),
+                onSave: () => bloc.add(const PhotoSaveConfirmed()),
+              ),
+            InsertionModalFotoSaving() => const CaptureLoadingIndicator(),
+            InsertionModalFotoFailure(
+              imagePath: final imagePath,
+              message: final message,
+            ) =>
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _Thumbnail.wide(imagePath: imagePath),
+                  const SizedBox(height: DesignTokens.spacingMd),
+                  RecognitionErrorView(
+                    message: message,
+                    onRetry: () => bloc.add(const RetryRequested()),
+                    secondaryAction: (
+                      'Salvar só a foto',
+                      () => bloc.add(const PhotoSaveWithoutTextRequested()),
+                    ),
+                  ),
+                ],
               ),
             _ => const SizedBox.shrink(),
           },
         ),
       ),
+    );
+  }
+}
+
+class _Thumbnail extends StatelessWidget {
+  const _Thumbnail({required this.imagePath})
+    : width = DesignTokens.sizePhotoThumbnail,
+      height = DesignTokens.sizePhotoThumbnail;
+
+  const _Thumbnail.wide({required this.imagePath})
+    : width = DesignTokens.sizePhotoThumbnailWideWidth,
+      height = DesignTokens.sizePhotoThumbnailWideHeight;
+
+  final String imagePath;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(DesignTokens.radiusSm),
+      child: Image.file(
+        File(imagePath),
+        width: width,
+        height: height,
+        fit: BoxFit.cover,
+      ),
+    );
+  }
+}
+
+class _ProcessingView extends StatelessWidget {
+  const _ProcessingView({required this.imagePath});
+
+  final String imagePath;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _Thumbnail.wide(imagePath: imagePath),
+        const SizedBox(height: DesignTokens.spacingMd),
+        const CaptureLoadingIndicator(),
+        const SizedBox(height: DesignTokens.spacingSm),
+        Text(
+          'Reconhecendo texto...',
+          style: DesignTokens.textLabelMd.copyWith(
+            color: DesignTokens.colorTextSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewView extends StatelessWidget {
+  const _ReviewView({
+    required this.imagePath,
+    required this.text,
+    required this.message,
+    required this.onTextChanged,
+    required this.onSave,
+  });
+
+  final String imagePath;
+  final String text;
+  final String? message;
+  final ValueChanged<String> onTextChanged;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _Thumbnail(imagePath: imagePath),
+            const SizedBox(width: DesignTokens.spacingMd),
+            Expanded(
+              child: TextFormField(
+                key: const ValueKey('photoReviewField'),
+                initialValue: text,
+                maxLines: 6,
+                minLines: 3,
+                onChanged: onTextChanged,
+              ),
+            ),
+          ],
+        ),
+        if (message != null) ...[
+          const SizedBox(height: DesignTokens.spacingSm),
+          Text(
+            message!,
+            style: DesignTokens.textBodyMd.copyWith(
+              color: DesignTokens.colorError,
+            ),
+          ),
+        ],
+        const SizedBox(height: DesignTokens.spacingMd),
+        ElevatedButton(
+          onPressed: text.trim().isNotEmpty ? onSave : null,
+          child: const Text('Salvar'),
+        ),
+      ],
     );
   }
 }

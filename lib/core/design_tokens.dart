@@ -112,6 +112,10 @@ class DesignTokens {
   static const double sizeLoadingDot = 8;
   static const double sizeLoadingIndicator = 20;
   static const double strokeWidthLoadingIndicator = 2;
+  // The fixed sweep fraction of `CaptureLoadingIndicator`'s rotating ring —
+  // kept constant (only the whole ring rotates) so it never collapses into
+  // a short dash the way Material's default pulsing-arc animation does.
+  static const double valueLoadingIndicatorArc = 0.75;
   static const double dividerThickness = 1;
   static const double borderWidthFocused = 1.5;
   static const double sizeKeypadTapTarget = 56;
@@ -121,6 +125,10 @@ class DesignTokens {
   static const double sizeAudioRecordButton = 72;
   static const double sizeAudioRecordIcon = 30;
   static const double sizePhotoTileIcon = 26;
+  static const double sizePhotoThumbnail = 56;
+  static const double sizePhotoThumbnailWideWidth = 96;
+  static const double sizePhotoThumbnailWideHeight = 72;
+  static const double sizeStatusIcon = 32;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [

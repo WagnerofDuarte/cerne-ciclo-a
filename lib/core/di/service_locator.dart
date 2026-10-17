@@ -19,8 +19,8 @@ import 'package:cerne/features/capture/domain/repositories/audio_capture_reposit
 import 'package:cerne/features/capture/domain/repositories/audio_transcription_repository.dart';
 import 'package:cerne/features/capture/domain/repositories/photo_capture_repository.dart';
 import 'package:cerne/features/capture/domain/repositories/photo_recognition_repository.dart';
-import 'package:cerne/features/capture/domain/usecases/save_audio_entry_usecase.dart';
-import 'package:cerne/features/capture/domain/usecases/save_photo_entry_usecase.dart';
+import 'package:cerne/features/capture/domain/usecases/confirm_entry_save_usecase.dart';
+import 'package:cerne/features/capture/domain/usecases/recognize_photo_usecase.dart';
 import 'package:cerne/features/capture/domain/usecases/save_text_entry_usecase.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
 import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
@@ -203,17 +203,15 @@ void setupServiceLocator() {
       connectivityChecker: getIt<ConnectivityChecker>(),
     ),
   );
-  getIt.registerLazySingleton<SaveAudioEntryUseCase>(
-    () => SaveAudioEntryUseCase(
-      transcriptionRepository: getIt<AudioTranscriptionRepository>(),
+  getIt.registerLazySingleton<ConfirmEntrySaveUseCase>(
+    () => ConfirmEntrySaveUseCase(
       createEntryUseCase: getIt<CreateEntryUseCase>(),
       connectivityChecker: getIt<ConnectivityChecker>(),
     ),
   );
-  getIt.registerLazySingleton<SavePhotoEntryUseCase>(
-    () => SavePhotoEntryUseCase(
+  getIt.registerLazySingleton<RecognizePhotoUseCase>(
+    () => RecognizePhotoUseCase(
       recognitionRepository: getIt<PhotoRecognitionRepository>(),
-      createEntryUseCase: getIt<CreateEntryUseCase>(),
       connectivityChecker: getIt<ConnectivityChecker>(),
     ),
   );
@@ -221,9 +219,10 @@ void setupServiceLocator() {
     () => InsertionModalBloc(
       saveTextEntryUseCase: getIt<SaveTextEntryUseCase>(),
       audioCaptureRepository: getIt<AudioCaptureRepository>(),
-      saveAudioEntryUseCase: getIt<SaveAudioEntryUseCase>(),
+      audioTranscriptionRepository: getIt<AudioTranscriptionRepository>(),
+      confirmEntrySaveUseCase: getIt<ConfirmEntrySaveUseCase>(),
       photoCaptureRepository: getIt<PhotoCaptureRepository>(),
-      savePhotoEntryUseCase: getIt<SavePhotoEntryUseCase>(),
+      recognizePhotoUseCase: getIt<RecognizePhotoUseCase>(),
     ),
   );
 }

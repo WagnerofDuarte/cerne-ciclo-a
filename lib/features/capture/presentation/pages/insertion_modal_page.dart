@@ -54,11 +54,17 @@ class _InsertionModalPageState extends State<InsertionModalPage> {
     InsertionModalAudioIdle() ||
     InsertionModalAudioPermissionDenied() ||
     InsertionModalAudioRecording() ||
+    InsertionModalAudioProcessing() ||
+    InsertionModalAudioTranscribed() ||
     InsertionModalAudioSaving() ||
+    InsertionModalAudioSaveFailure() ||
     InsertionModalAudioFailure() => CaptureTab.audio,
     InsertionModalFotoCaptura() ||
     InsertionModalFotoPermissionDenied() ||
+    InsertionModalFotoProcessing() ||
+    InsertionModalFotoReconhecido() ||
     InsertionModalFotoSaving() ||
+    InsertionModalFotoSaveFailure() ||
     InsertionModalFotoFailure() => CaptureTab.foto,
   };
 
@@ -116,13 +122,19 @@ class _InsertionModalPageState extends State<InsertionModalPage> {
                         InsertionModalAudioIdle() ||
                         InsertionModalAudioPermissionDenied() ||
                         InsertionModalAudioRecording() ||
+                        InsertionModalAudioProcessing() ||
+                        InsertionModalAudioTranscribed() ||
                         InsertionModalAudioSaving() ||
+                        InsertionModalAudioSaveFailure() ||
                         InsertionModalAudioFailure() => AudioTabView(
                           state: state,
                         ),
                         InsertionModalFotoCaptura() ||
                         InsertionModalFotoPermissionDenied() ||
+                        InsertionModalFotoProcessing() ||
+                        InsertionModalFotoReconhecido() ||
                         InsertionModalFotoSaving() ||
+                        InsertionModalFotoSaveFailure() ||
                         InsertionModalFotoFailure() => FotoTabView(
                           state: state,
                         ),

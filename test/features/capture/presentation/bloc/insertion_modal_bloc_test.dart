@@ -2,9 +2,11 @@ import 'package:bloc_test/bloc_test.dart';
 import 'package:cerne/core/network/failure.dart';
 import 'package:cerne/features/capture/domain/entities/recognition_failure.dart';
 import 'package:cerne/features/capture/domain/repositories/audio_capture_repository.dart';
+import 'package:cerne/features/capture/domain/repositories/audio_transcription_repository.dart';
 import 'package:cerne/features/capture/domain/repositories/photo_capture_repository.dart';
-import 'package:cerne/features/capture/domain/usecases/save_audio_entry_usecase.dart';
-import 'package:cerne/features/capture/domain/usecases/save_photo_entry_usecase.dart';
+import 'package:cerne/features/capture/domain/repositories/photo_recognition_repository.dart';
+import 'package:cerne/features/capture/domain/usecases/confirm_entry_save_usecase.dart';
+import 'package:cerne/features/capture/domain/usecases/recognize_photo_usecase.dart';
 import 'package:cerne/features/capture/domain/usecases/save_text_entry_usecase.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_event.dart';
@@ -19,16 +21,20 @@ class MockSaveTextEntryUseCase extends Mock implements SaveTextEntryUseCase {}
 class MockAudioCaptureRepository extends Mock
     implements AudioCaptureRepository {}
 
-class MockSaveAudioEntryUseCase extends Mock implements SaveAudioEntryUseCase {}
+class MockAudioTranscriptionRepository extends Mock
+    implements AudioTranscriptionRepository {}
+
+class MockConfirmEntrySaveUseCase extends Mock
+    implements ConfirmEntrySaveUseCase {}
 
 class MockPhotoCaptureRepository extends Mock
     implements PhotoCaptureRepository {}
 
-class MockSavePhotoEntryUseCase extends Mock implements SavePhotoEntryUseCase {}
+class MockRecognizePhotoUseCase extends Mock implements RecognizePhotoUseCase {}
 
-Entry _buildEntry(EntrySource source) => Entry(
+Entry _buildEntry(EntrySource source, {String content = 'hello'}) => Entry(
   id: 'entry-1',
-  content: 'hello',
+  content: content,
   source: source,
   chatMessageId: null,
   occurredAt: DateTime(2026, 1, 1),
@@ -45,21 +51,27 @@ Entry _buildEntry(EntrySource source) => Entry(
 void main() {
   late MockSaveTextEntryUseCase saveTextEntryUseCase;
   late MockAudioCaptureRepository audioCaptureRepository;
-  late MockSaveAudioEntryUseCase saveAudioEntryUseCase;
+  late MockAudioTranscriptionRepository audioTranscriptionRepository;
+  late MockConfirmEntrySaveUseCase confirmEntrySaveUseCase;
   late MockPhotoCaptureRepository photoCaptureRepository;
-  late MockSavePhotoEntryUseCase savePhotoEntryUseCase;
+  late MockRecognizePhotoUseCase recognizePhotoUseCase;
 
   const audioPath = '/tmp/audio.wav';
   const imagePath = '/tmp/photo.jpg';
   var closeSignalFired = false;
 
+  setUpAll(() {
+    registerFallbackValue(EntrySource.audio);
+  });
+
   setUp(() {
     closeSignalFired = false;
     saveTextEntryUseCase = MockSaveTextEntryUseCase();
     audioCaptureRepository = MockAudioCaptureRepository();
-    saveAudioEntryUseCase = MockSaveAudioEntryUseCase();
+    audioTranscriptionRepository = MockAudioTranscriptionRepository();
+    confirmEntrySaveUseCase = MockConfirmEntrySaveUseCase();
     photoCaptureRepository = MockPhotoCaptureRepository();
-    savePhotoEntryUseCase = MockSavePhotoEntryUseCase();
+    recognizePhotoUseCase = MockRecognizePhotoUseCase();
 
     when(() => audioCaptureRepository.discard()).thenReturn(null);
   });
@@ -67,16 +79,17 @@ void main() {
   InsertionModalBloc buildBloc() => InsertionModalBloc(
     saveTextEntryUseCase: saveTextEntryUseCase,
     audioCaptureRepository: audioCaptureRepository,
-    saveAudioEntryUseCase: saveAudioEntryUseCase,
+    audioTranscriptionRepository: audioTranscriptionRepository,
+    confirmEntrySaveUseCase: confirmEntrySaveUseCase,
     photoCaptureRepository: photoCaptureRepository,
-    savePhotoEntryUseCase: savePhotoEntryUseCase,
+    recognizePhotoUseCase: recognizePhotoUseCase,
   );
 
   test('initial state is InsertionModalTexto with an empty draft', () {
     expect(buildBloc().state, const InsertionModalTexto());
   });
 
-  group('Texto flow (US1)', () {
+  group('Texto flow', () {
     blocTest<InsertionModalBloc, InsertionModalState>(
       'TextDraftChanged round-trips the draft',
       build: buildBloc,
@@ -167,7 +180,7 @@ void main() {
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'partially typed text + ModalClosed creates no entry, draft discarded (US4)',
+      'partially typed text + ModalClosed creates no entry, draft discarded (US5)',
       build: buildBloc,
       act: (bloc) {
         bloc.add(const TextDraftChanged('partial'));
@@ -180,7 +193,7 @@ void main() {
     );
   });
 
-  group('Áudio flow (US2)', () {
+  group('Áudio flow (US1/US2)', () {
     blocTest<InsertionModalBloc, InsertionModalState>(
       'TabSelected(audio) opens on the idle state, without checking '
       'permission or starting recording',
@@ -259,98 +272,292 @@ void main() {
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'AudioStopRequested success triggers the close side-effect',
+      'AudioStopRequested reaches Processing then Transcribed on success, '
+      'with no entries-create call made in between (SC-001)',
       setUp: () {
         when(() => audioCaptureRepository.stop())
             .thenAnswer((_) async => audioPath);
-        when(() => saveAudioEntryUseCase(audioPath))
-            .thenAnswer((_) async => Right(_buildEntry(EntrySource.audio)));
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async => const Right('hello world'));
       },
       build: buildBloc,
-      seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
-      act: (bloc) {
-        bloc.closeRequests.listen((_) => closeSignalFired = true);
-        bloc.add(const AudioStopRequested());
-      },
-      expect: () => [const InsertionModalAudioSaving()],
+      seed: () =>
+          const InsertionModalAudioRecording(elapsed: Duration(seconds: 5)),
+      act: (bloc) => bloc.add(const AudioStopRequested()),
+      expect: () => [
+        const InsertionModalAudioProcessing(duration: Duration(seconds: 5)),
+        const InsertionModalAudioTranscribed(
+          text: 'hello world',
+          duration: Duration(seconds: 5),
+        ),
+      ],
       verify: (_) {
-        verify(() => saveAudioEntryUseCase(audioPath)).called(1);
-        expect(closeSignalFired, isTrue);
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
       },
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'recognition failure maps to InsertionModalAudioFailure',
+      'empty-result transcription maps to InsertionModalAudioFailure, no entry created',
       setUp: () {
         when(() => audioCaptureRepository.stop())
             .thenAnswer((_) async => audioPath);
-        when(() => saveAudioEntryUseCase(audioPath)).thenAnswer(
-          (_) async =>
-              const Left(SaveAudioRecognitionFailed(EmptyRecognitionResult())),
-        );
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async => const Left(EmptyRecognitionResult()));
       },
       build: buildBloc,
       seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
       act: (bloc) => bloc.add(const AudioStopRequested()),
       expect: () => [
-        const InsertionModalAudioSaving(),
+        const InsertionModalAudioProcessing(duration: Duration.zero),
+        isA<InsertionModalAudioFailure>(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'generic transcription error maps to InsertionModalAudioFailure',
+      setUp: () {
+        when(() => audioCaptureRepository.stop())
+            .thenAnswer((_) async => audioPath);
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async => const Left(TranscriptionError()));
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
+      act: (bloc) => bloc.add(const AudioStopRequested()),
+      expect: () => [
+        const InsertionModalAudioProcessing(duration: Duration.zero),
         isA<InsertionModalAudioFailure>(),
       ],
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'entry-creation failure maps to InsertionModalAudioFailure with the backend message',
-      setUp: () {
-        when(() => audioCaptureRepository.stop())
-            .thenAnswer((_) async => audioPath);
-        when(() => saveAudioEntryUseCase(audioPath)).thenAnswer(
-          (_) async => const Left(
-            SaveAudioEntryCreationFailed(
-              NetworkTimeoutFailure(message: 'timed out', requestId: 'r1'),
-            ),
-          ),
-        );
-      },
+      'AudioReviewTextChanged updates the held draft and re-emits the same state subtype',
       build: buildBloc,
-      seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
-      act: (bloc) => bloc.add(const AudioStopRequested()),
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) => bloc.add(const AudioReviewTextChanged('edited text')),
       expect: () => [
-        const InsertionModalAudioSaving(),
-        const InsertionModalAudioFailure('timed out'),
+        const InsertionModalAudioTranscribed(
+          text: 'edited text',
+          duration: Duration(seconds: 5),
+        ),
       ],
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'RetryRequested re-uses the held audio path without calling stop() again',
+      'AudioSaveConfirmed with edited text creates the entry with that edited '
+      'text and source: audio, then triggers the close side-effect',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('edited text', EntrySource.audio))
+            .thenAnswer(
+              (_) async => Right(
+                _buildEntry(EntrySource.audio, content: 'edited text'),
+              ),
+            );
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) {
+        bloc.closeRequests.listen((_) => closeSignalFired = true);
+        bloc.add(const AudioReviewTextChanged('edited text'));
+        bloc.add(const AudioSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalAudioTranscribed(
+          text: 'edited text',
+          duration: Duration(seconds: 5),
+        ),
+        const InsertionModalAudioSaving(
+          text: 'edited text',
+          duration: Duration(seconds: 5),
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('edited text', EntrySource.audio),
+        ).called(1);
+        expect(closeSignalFired, isTrue);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a repeat AudioSaveConfirmed while already Saving is ignored (no duplicate entry)',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.audio))
+            .thenAnswer((_) async {
+              await Future<void>.delayed(const Duration(milliseconds: 30));
+              return Right(_buildEntry(EntrySource.audio));
+            });
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) {
+        bloc.add(const AudioSaveConfirmed());
+        bloc.add(const AudioSaveConfirmed());
+      },
+      wait: const Duration(milliseconds: 60),
+      expect: () => [
+        const InsertionModalAudioSaving(
+          text: 'hello world',
+          duration: Duration(seconds: 5),
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('hello world', EntrySource.audio),
+        ).called(1);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'AudioSaveConfirmed while the reviewed text is whitespace-only is ignored '
+      '(bypassing the UI\'s disabled Salvar) — no entry created, no state change',
+      build: buildBloc,
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) {
+        bloc.add(const AudioReviewTextChanged('   '));
+        bloc.add(const AudioSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalAudioTranscribed(
+          text: '   ',
+          duration: Duration(seconds: 5),
+        ),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'ConfirmEntrySaveUseCase offline/creation failure from Transcrito maps '
+      'to InsertionModalAudioSaveFailure, preserving the held text/duration',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.audio))
+            .thenAnswer((_) async => const Left(ConfirmEntrySaveOffline()));
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) => bloc.add(const AudioSaveConfirmed()),
+      expect: () => [
+        const InsertionModalAudioSaving(
+          text: 'hello world',
+          duration: Duration(seconds: 5),
+        ),
+        isA<InsertionModalAudioSaveFailure>()
+            .having((s) => s.text, 'text', 'hello world')
+            .having((s) => s.duration, 'duration', const Duration(seconds: 5)),
+      ],
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a subsequent AudioSaveConfirmed from AudioSaveFailure retries and '
+      'creates exactly one entry on success',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.audio))
+            .thenAnswer((_) async => Right(_buildEntry(EntrySource.audio)));
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioSaveFailure(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+        message: 'offline',
+      ),
+      act: (bloc) {
+        bloc.closeRequests.listen((_) => closeSignalFired = true);
+        bloc.add(const AudioSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalAudioSaving(
+          text: 'hello world',
+          duration: Duration(seconds: 5),
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('hello world', EntrySource.audio),
+        ).called(1);
+        expect(closeSignalFired, isTrue);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a transcribe() result that resolves after the bloc has moved away '
+      'from the matching AudioProcessing state is discarded (research.md R6)',
       setUp: () {
         when(() => audioCaptureRepository.stop())
             .thenAnswer((_) async => audioPath);
-        when(() => saveAudioEntryUseCase(audioPath)).thenAnswer(
-          (_) async => const Left(
-            SaveAudioEntryCreationFailed(
-              NetworkTimeoutFailure(message: 'timed out', requestId: 'r1'),
-            ),
-          ),
-        );
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async {
+              await Future<void>.delayed(const Duration(milliseconds: 30));
+              return const Right('late result');
+            });
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
+      act: (bloc) async {
+        bloc.add(const AudioStopRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const TabSelected(CaptureTab.texto));
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => [
+        const InsertionModalAudioProcessing(duration: Duration.zero),
+        const InsertionModalTexto(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'RetryRequested re-transcribes the same held path without a new stop() call',
+      setUp: () {
+        when(() => audioCaptureRepository.stop())
+            .thenAnswer((_) async => audioPath);
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async => const Left(TranscriptionError()));
       },
       build: buildBloc,
       seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
       act: (bloc) async {
         bloc.add(const AudioStopRequested());
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        when(() => saveAudioEntryUseCase(audioPath))
-            .thenAnswer((_) async => Right(_buildEntry(EntrySource.audio)));
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async => const Right('hello world'));
         bloc.add(const RetryRequested());
       },
       wait: const Duration(milliseconds: 20),
       expect: () => [
-        const InsertionModalAudioSaving(),
-        const InsertionModalAudioFailure('timed out'),
-        const InsertionModalAudioSaving(),
+        const InsertionModalAudioProcessing(duration: Duration.zero),
+        isA<InsertionModalAudioFailure>(),
+        const InsertionModalAudioProcessing(duration: Duration.zero),
+        const InsertionModalAudioTranscribed(
+          text: 'hello world',
+          duration: Duration.zero,
+        ),
       ],
       verify: (_) {
         verify(() => audioCaptureRepository.stop()).called(1);
-        verify(() => saveAudioEntryUseCase(audioPath)).called(2);
+        verify(() => audioTranscriptionRepository.transcribe(audioPath))
+            .called(2);
       },
     );
 
@@ -366,14 +573,56 @@ void main() {
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'ModalClosed mid-recording discards it, creates no entry (US4)',
+      'closing the modal from AudioTranscribed with unsaved edits discards '
+      'both the edits and the capture — no entry created (US5 Scenario 2)',
+      build: buildBloc,
+      seed: () => const InsertionModalAudioTranscribed(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+      ),
+      act: (bloc) {
+        bloc.add(const AudioReviewTextChanged('unsaved edit'));
+        bloc.add(const ModalClosed());
+        bloc.add(const TabSelected(CaptureTab.audio));
+      },
+      expect: () => [
+        const InsertionModalAudioTranscribed(
+          text: 'unsaved edit',
+          duration: Duration(seconds: 5),
+        ),
+        const InsertionModalAudioIdle(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'switching tabs from AudioSaveFailure discards the held audio — no '
+      'entry created (US5 Scenario 3)',
+      build: buildBloc,
+      seed: () => const InsertionModalAudioSaveFailure(
+        text: 'hello world',
+        duration: Duration(seconds: 5),
+        message: 'offline',
+      ),
+      act: (bloc) {
+        bloc.add(const TabSelected(CaptureTab.audio));
+      },
+      expect: () => [const InsertionModalAudioIdle()],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'ModalClosed mid-recording discards it, creates no entry',
       build: buildBloc,
       seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
       act: (bloc) => bloc.add(const ModalClosed()),
       expect: () => <InsertionModalState>[],
       verify: (_) {
         verify(() => audioCaptureRepository.discard()).called(1);
-        verifyNever(() => saveAudioEntryUseCase(any()));
       },
     );
 
@@ -386,12 +635,11 @@ void main() {
       expect: () => <InsertionModalState>[],
       verify: (_) {
         verify(() => audioCaptureRepository.discard()).called(1);
-        verifyNever(() => saveAudioEntryUseCase(any()));
       },
     );
   });
 
-  group('Foto flow (US3)', () {
+  group('Foto flow (US3/US4)', () {
     blocTest<InsertionModalBloc, InsertionModalState>(
       'TabSelected(foto) goes straight to the two-button Captura state',
       build: buildBloc,
@@ -409,7 +657,7 @@ void main() {
       seed: () => const InsertionModalFotoCaptura(),
       act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.gallery)),
       verify: (_) {
-        verifyNever(() => savePhotoEntryUseCase(any()));
+        verifyNever(() => recognizePhotoUseCase(any()));
       },
     );
 
@@ -424,29 +672,52 @@ void main() {
       act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.camera)),
       expect: () => [const InsertionModalFotoPermissionDenied()],
       verify: (_) {
-        verifyNever(() => savePhotoEntryUseCase(any()));
+        verifyNever(() => recognizePhotoUseCase(any()));
       },
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'PhotoSourceSelected success triggers the close side-effect',
+      'PhotoSourceSelected reaches Processing then Reconhecido on success, '
+      'with no entries-create call made in between (SC-002)',
       setUp: () {
         when(() => photoCaptureRepository.pickImage(PhotoSource.camera))
             .thenAnswer((_) async => imagePath);
-        when(() => savePhotoEntryUseCase(imagePath))
-            .thenAnswer((_) async => Right(_buildEntry(EntrySource.photo)));
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
+          (_) async =>
+              const Right(OcrResult(text: 'hello world', confidence: 'high')),
+        );
       },
       build: buildBloc,
       seed: () => const InsertionModalFotoCaptura(),
-      act: (bloc) {
-        bloc.closeRequests.listen((_) => closeSignalFired = true);
-        bloc.add(const PhotoSourceSelected(PhotoSource.camera));
-      },
-      expect: () => [const InsertionModalFotoSaving()],
+      act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.camera)),
+      expect: () => [
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        const InsertionModalFotoReconhecido(
+          imagePath: imagePath,
+          text: 'hello world',
+        ),
+      ],
       verify: (_) {
-        verify(() => savePhotoEntryUseCase(imagePath)).called(1);
-        expect(closeSignalFired, isTrue);
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
       },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'offline before OCR maps to InsertionModalFotoFailure with the offline message',
+      setUp: () {
+        when(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
+            .thenAnswer((_) async => imagePath);
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
+          (_) async => const Left(PhotoRecognitionOffline()),
+        );
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoCaptura(),
+      act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.gallery)),
+      expect: () => [
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        isA<InsertionModalFotoFailure>(),
+      ],
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
@@ -454,9 +725,9 @@ void main() {
       setUp: () {
         when(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
             .thenAnswer((_) async => imagePath);
-        when(() => savePhotoEntryUseCase(imagePath)).thenAnswer(
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
           (_) async => const Left(
-            SavePhotoRecognitionFailed(
+            PhotoRecognitionCallFailed(
               OcrNoTextFailure(message: 'no text', requestId: 'r1'),
             ),
           ),
@@ -466,19 +737,21 @@ void main() {
       seed: () => const InsertionModalFotoCaptura(),
       act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.gallery)),
       expect: () => [
-        const InsertionModalFotoSaving(),
+        const InsertionModalFotoProcessing(imagePath: imagePath),
         isA<InsertionModalFotoFailure>(),
       ],
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'entry-creation failure maps to InsertionModalFotoFailure with the backend message',
+      'another recognition failure maps to InsertionModalFotoFailure with '
+      "the same 'no text recognized' copy as OCR_NO_TEXT, not the raw "
+      'backend message (FR-007)',
       setUp: () {
         when(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
             .thenAnswer((_) async => imagePath);
-        when(() => savePhotoEntryUseCase(imagePath)).thenAnswer(
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
           (_) async => const Left(
-            SavePhotoEntryCreationFailed(
+            PhotoRecognitionCallFailed(
               ValidationFailure(message: 'bad request', requestId: 'r2'),
             ),
           ),
@@ -488,19 +761,219 @@ void main() {
       seed: () => const InsertionModalFotoCaptura(),
       act: (bloc) => bloc.add(const PhotoSourceSelected(PhotoSource.gallery)),
       expect: () => [
-        const InsertionModalFotoSaving(),
-        const InsertionModalFotoFailure('bad request'),
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        const InsertionModalFotoFailure(
+          imagePath: imagePath,
+          message: 'Não foi possível reconhecer o texto — tente outra foto.',
+        ),
       ],
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'RetryRequested re-uses the held image path without calling pickImage() again',
+      'PhotoReviewTextChanged updates the held draft',
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) => bloc.add(const PhotoReviewTextChanged('edited text')),
+      expect: () => [
+        const InsertionModalFotoReconhecido(
+          imagePath: imagePath,
+          text: 'edited text',
+        ),
+      ],
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'PhotoSaveConfirmed with the current (possibly edited) text creates '
+      'the entry with source: photo, then triggers the close side-effect',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('edited text', EntrySource.photo))
+            .thenAnswer(
+              (_) async => Right(
+                _buildEntry(EntrySource.photo, content: 'edited text'),
+              ),
+            );
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) {
+        bloc.closeRequests.listen((_) => closeSignalFired = true);
+        bloc.add(const PhotoReviewTextChanged('edited text'));
+        bloc.add(const PhotoSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalFotoReconhecido(
+          imagePath: imagePath,
+          text: 'edited text',
+        ),
+        const InsertionModalFotoSaving(
+          imagePath: imagePath,
+          text: 'edited text',
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('edited text', EntrySource.photo),
+        ).called(1);
+        expect(closeSignalFired, isTrue);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a repeat PhotoSaveConfirmed while already Saving is ignored',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.photo))
+            .thenAnswer((_) async {
+              await Future<void>.delayed(const Duration(milliseconds: 30));
+              return Right(_buildEntry(EntrySource.photo));
+            });
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) {
+        bloc.add(const PhotoSaveConfirmed());
+        bloc.add(const PhotoSaveConfirmed());
+      },
+      wait: const Duration(milliseconds: 60),
+      expect: () => [
+        const InsertionModalFotoSaving(
+          imagePath: imagePath,
+          text: 'hello world',
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('hello world', EntrySource.photo),
+        ).called(1);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'PhotoSaveConfirmed while the reviewed text is whitespace-only is ignored',
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) {
+        bloc.add(const PhotoReviewTextChanged('   '));
+        bloc.add(const PhotoSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalFotoReconhecido(imagePath: imagePath, text: '   '),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'ConfirmEntrySaveUseCase failure from Reconhecido maps to '
+      'InsertionModalFotoSaveFailure, preserving the held path/text',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.photo))
+            .thenAnswer(
+              (_) async => const Left(
+                ConfirmEntrySaveCreationFailed(
+                  NetworkTimeoutFailure(message: 'timed out', requestId: 'r1'),
+                ),
+              ),
+            );
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) => bloc.add(const PhotoSaveConfirmed()),
+      expect: () => [
+        const InsertionModalFotoSaving(
+          imagePath: imagePath,
+          text: 'hello world',
+        ),
+        const InsertionModalFotoSaveFailure(
+          imagePath: imagePath,
+          text: 'hello world',
+          message: 'timed out',
+        ),
+      ],
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a subsequent PhotoSaveConfirmed from FotoSaveFailure retries and '
+      'creates exactly one entry on success',
+      setUp: () {
+        when(() => confirmEntrySaveUseCase('hello world', EntrySource.photo))
+            .thenAnswer((_) async => Right(_buildEntry(EntrySource.photo)));
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoSaveFailure(
+        imagePath: imagePath,
+        text: 'hello world',
+        message: 'timed out',
+      ),
+      act: (bloc) {
+        bloc.closeRequests.listen((_) => closeSignalFired = true);
+        bloc.add(const PhotoSaveConfirmed());
+      },
+      expect: () => [
+        const InsertionModalFotoSaving(
+          imagePath: imagePath,
+          text: 'hello world',
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase('hello world', EntrySource.photo),
+        ).called(1);
+        expect(closeSignalFired, isTrue);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'a recognize() result that resolves after the bloc has moved away from '
+      'the matching FotoProcessing state is discarded (research.md R6)',
       setUp: () {
         when(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
             .thenAnswer((_) async => imagePath);
-        when(() => savePhotoEntryUseCase(imagePath)).thenAnswer(
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer((_) async {
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          return const Right(OcrResult(text: 'late result', confidence: 'high'));
+        });
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoCaptura(),
+      act: (bloc) async {
+        bloc.add(const PhotoSourceSelected(PhotoSource.gallery));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const TabSelected(CaptureTab.texto));
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => [
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        const InsertionModalTexto(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'RetryRequested re-runs OCR on the same held image without a new pickImage() call',
+      setUp: () {
+        when(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
+            .thenAnswer((_) async => imagePath);
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
           (_) async => const Left(
-            SavePhotoEntryCreationFailed(
+            PhotoRecognitionCallFailed(
               ValidationFailure(message: 'bad request', requestId: 'r2'),
             ),
           ),
@@ -511,31 +984,154 @@ void main() {
       act: (bloc) async {
         bloc.add(const PhotoSourceSelected(PhotoSource.gallery));
         await Future<void>.delayed(const Duration(milliseconds: 10));
-        when(() => savePhotoEntryUseCase(imagePath))
-            .thenAnswer((_) async => Right(_buildEntry(EntrySource.photo)));
+        when(() => recognizePhotoUseCase(imagePath)).thenAnswer(
+          (_) async =>
+              const Right(OcrResult(text: 'hello world', confidence: 'high')),
+        );
         bloc.add(const RetryRequested());
       },
       wait: const Duration(milliseconds: 20),
       expect: () => [
-        const InsertionModalFotoSaving(),
-        const InsertionModalFotoFailure('bad request'),
-        const InsertionModalFotoSaving(),
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        const InsertionModalFotoFailure(
+          imagePath: imagePath,
+          message: 'Não foi possível reconhecer o texto — tente outra foto.',
+        ),
+        const InsertionModalFotoProcessing(imagePath: imagePath),
+        const InsertionModalFotoReconhecido(
+          imagePath: imagePath,
+          text: 'hello world',
+        ),
       ],
       verify: (_) {
         verify(() => photoCaptureRepository.pickImage(PhotoSource.gallery))
             .called(1);
-        verify(() => savePhotoEntryUseCase(imagePath)).called(2);
+        verify(() => recognizePhotoUseCase(imagePath)).called(2);
       },
     );
 
     blocTest<InsertionModalBloc, InsertionModalState>(
-      'ModalClosed while on Captura creates no entry (US4)',
+      'PhotoSaveWithoutTextRequested creates exactly one entry with the '
+      'fixed placeholder content and no further recognize() call (SC-004)',
+      setUp: () {
+        when(
+          () => confirmEntrySaveUseCase(
+            'Foto registrada sem texto reconhecido.',
+            EntrySource.photo,
+          ),
+        ).thenAnswer((_) async => Right(_buildEntry(EntrySource.photo)));
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalFotoFailure(
+        imagePath: imagePath,
+        message: 'Não foi possível reconhecer o texto',
+      ),
+      act: (bloc) {
+        bloc.closeRequests.listen((_) => closeSignalFired = true);
+        bloc.add(const PhotoSaveWithoutTextRequested());
+      },
+      expect: () => [
+        const InsertionModalFotoSaving(
+          imagePath: imagePath,
+          text: 'Foto registrada sem texto reconhecido.',
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => confirmEntrySaveUseCase(
+            'Foto registrada sem texto reconhecido.',
+            EntrySource.photo,
+          ),
+        ).called(1);
+        verifyNever(() => recognizePhotoUseCase(any()));
+        expect(closeSignalFired, isTrue);
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'closing the modal from FotoReconhecido with unsaved edits discards both '
+      'the edits and the picked image — no entry created (US5 Scenario 2)',
+      build: buildBloc,
+      seed: () => const InsertionModalFotoReconhecido(
+        imagePath: imagePath,
+        text: 'hello world',
+      ),
+      act: (bloc) {
+        bloc.add(const PhotoReviewTextChanged('unsaved edit'));
+        bloc.add(const ModalClosed());
+        bloc.add(const TabSelected(CaptureTab.foto));
+      },
+      expect: () => [
+        const InsertionModalFotoReconhecido(
+          imagePath: imagePath,
+          text: 'unsaved edit',
+        ),
+        const InsertionModalFotoCaptura(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'switching tabs from FotoFailure discards the held image — no entry '
+      'created, closing instead of choosing either action (US5 Scenario 3)',
+      build: buildBloc,
+      seed: () => const InsertionModalFotoFailure(
+        imagePath: imagePath,
+        message: 'Não foi possível reconhecer o texto',
+      ),
+      act: (bloc) {
+        bloc.add(const TabSelected(CaptureTab.foto));
+      },
+      expect: () => [const InsertionModalFotoCaptura()],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+        verifyNever(() => recognizePhotoUseCase(any()));
+      },
+    );
+
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'ModalClosed while on Captura creates no entry',
       build: buildBloc,
       seed: () => const InsertionModalFotoCaptura(),
       act: (bloc) => bloc.add(const ModalClosed()),
       expect: () => <InsertionModalState>[],
       verify: (_) {
-        verifyNever(() => savePhotoEntryUseCase(any()));
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
+      },
+    );
+  });
+
+  group('Cross-modality abandonment (US5)', () {
+    blocTest<InsertionModalBloc, InsertionModalState>(
+      'switching from Áudio to Foto mid-recognition, then back to Áudio, '
+      'shows a fresh idle state (no stale Transcrito/Erro resumed)',
+      setUp: () {
+        when(() => audioCaptureRepository.stop())
+            .thenAnswer((_) async => audioPath);
+        when(() => audioTranscriptionRepository.transcribe(audioPath))
+            .thenAnswer((_) async {
+              await Future<void>.delayed(const Duration(milliseconds: 30));
+              return const Right('late result');
+            });
+      },
+      build: buildBloc,
+      seed: () => const InsertionModalAudioRecording(elapsed: Duration.zero),
+      act: (bloc) async {
+        bloc.add(const AudioStopRequested());
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const TabSelected(CaptureTab.foto));
+        bloc.add(const TabSelected(CaptureTab.audio));
+      },
+      wait: const Duration(milliseconds: 50),
+      expect: () => [
+        const InsertionModalAudioProcessing(duration: Duration.zero),
+        const InsertionModalFotoCaptura(),
+        const InsertionModalAudioIdle(),
+      ],
+      verify: (_) {
+        verifyNever(() => confirmEntrySaveUseCase(any(), any()));
       },
     );
   });

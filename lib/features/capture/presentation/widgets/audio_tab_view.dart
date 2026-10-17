@@ -13,11 +13,12 @@ const _permissionDeniedMessage =
 /// A round start control with the "Toque para gravar" caption for
 /// [InsertionModalAudioIdle] (FR-004); a stop control, [AudioWaveform], and
 /// a running `mm:ss` timer for [InsertionModalAudioRecording]; the
-/// permission-denied message; the plain generic loading indicator for
-/// [InsertionModalAudioSaving] (FR-007); a plain failure message plus one
-/// generic retry action for [InsertionModalAudioFailure], deliberately not
-/// reproducing the prototype's named "Áudio — Erro" styling/copy
-/// (research.md R11).
+/// permission-denied message; a spinner over the frozen waveform for
+/// [InsertionModalAudioProcessing] (FR-001); an editable review field for
+/// [InsertionModalAudioTranscribed]/[InsertionModalAudioSaveFailure]
+/// (FR-002/FR-009); the plain generic loading indicator for
+/// [InsertionModalAudioSaving]; and [RecognitionErrorView] for
+/// [InsertionModalAudioFailure] (FR-003).
 class AudioTabView extends StatelessWidget {
   const AudioTabView({required this.state, super.key});
 
@@ -44,9 +45,36 @@ class AudioTabView extends StatelessWidget {
                 elapsed: elapsed,
                 onStop: () => bloc.add(const AudioStopRequested()),
               ),
+            InsertionModalAudioProcessing(duration: final duration) =>
+              _ProcessingView(duration: duration),
+            InsertionModalAudioTranscribed(
+              text: final text,
+              duration: final duration,
+            ) =>
+              _ReviewView(
+                text: text,
+                duration: duration,
+                message: null,
+                onTextChanged: (value) =>
+                    bloc.add(AudioReviewTextChanged(value)),
+                onSave: () => bloc.add(const AudioSaveConfirmed()),
+              ),
+            InsertionModalAudioSaveFailure(
+              text: final text,
+              duration: final duration,
+              message: final message,
+            ) =>
+              _ReviewView(
+                text: text,
+                duration: duration,
+                message: message,
+                onTextChanged: (value) =>
+                    bloc.add(AudioReviewTextChanged(value)),
+                onSave: () => bloc.add(const AudioSaveConfirmed()),
+              ),
             InsertionModalAudioSaving() => const CaptureLoadingIndicator(),
             InsertionModalAudioFailure(message: final message) =>
-              CaptureFailureBand(
+              RecognitionErrorView(
                 message: message,
                 onRetry: () => bloc.add(const RetryRequested()),
               ),
@@ -54,6 +82,98 @@ class AudioTabView extends StatelessWidget {
           },
         ),
       ),
+    );
+  }
+}
+
+class _ProcessingView extends StatelessWidget {
+  const _ProcessingView({required this.duration});
+
+  final Duration duration;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = duration.inMinutes.toString().padLeft(2, '0');
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const CaptureLoadingIndicator(),
+        const SizedBox(height: DesignTokens.spacingMd),
+        Text(
+          'Transcrevendo...',
+          style: DesignTokens.textLabelMd.copyWith(
+            color: DesignTokens.colorTextSecondary,
+          ),
+        ),
+        const SizedBox(height: DesignTokens.spacingMd),
+        const Opacity(opacity: 0.35, child: AudioWaveform()),
+        const SizedBox(height: DesignTokens.spacingSm),
+        Text(
+          '$minutes:$seconds de áudio',
+          style: DesignTokens.textMonoCaption.copyWith(
+            color: DesignTokens.colorTextSecondary,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReviewView extends StatelessWidget {
+  const _ReviewView({
+    required this.text,
+    required this.duration,
+    required this.message,
+    required this.onTextChanged,
+    required this.onSave,
+  });
+
+  final String text;
+  final Duration duration;
+  final String? message;
+  final ValueChanged<String> onTextChanged;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final minutes = duration.inMinutes.toString().padLeft(2, '0');
+    final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        TextFormField(
+          key: const ValueKey('audioReviewField'),
+          initialValue: text,
+          maxLines: 6,
+          minLines: 3,
+          onChanged: onTextChanged,
+        ),
+        const SizedBox(height: DesignTokens.spacingSm),
+        Text(
+          'áudio original · $minutes:$seconds',
+          style: DesignTokens.textMonoCaption.copyWith(
+            color: DesignTokens.colorTextSecondary,
+          ),
+        ),
+        if (message != null) ...[
+          const SizedBox(height: DesignTokens.spacingSm),
+          Text(
+            message!,
+            style: DesignTokens.textBodyMd.copyWith(
+              color: DesignTokens.colorError,
+            ),
+          ),
+        ],
+        const SizedBox(height: DesignTokens.spacingMd),
+        ElevatedButton(
+          onPressed: text.trim().isNotEmpty ? onSave : null,
+          child: const Text('Salvar'),
+        ),
+      ],
     );
   }
 }

@@ -46,6 +46,19 @@ class AudioStopRequested extends InsertionModalEvent {
   const AudioStopRequested();
 }
 
+class AudioReviewTextChanged extends InsertionModalEvent {
+  const AudioReviewTextChanged(this.text);
+
+  final String text;
+
+  @override
+  List<Object?> get props => [text];
+}
+
+class AudioSaveConfirmed extends InsertionModalEvent {
+  const AudioSaveConfirmed();
+}
+
 class PhotoSourceSelected extends InsertionModalEvent {
   const PhotoSourceSelected(this.source);
 
@@ -53,6 +66,23 @@ class PhotoSourceSelected extends InsertionModalEvent {
 
   @override
   List<Object?> get props => [source];
+}
+
+class PhotoReviewTextChanged extends InsertionModalEvent {
+  const PhotoReviewTextChanged(this.text);
+
+  final String text;
+
+  @override
+  List<Object?> get props => [text];
+}
+
+class PhotoSaveConfirmed extends InsertionModalEvent {
+  const PhotoSaveConfirmed();
+}
+
+class PhotoSaveWithoutTextRequested extends InsertionModalEvent {
+  const PhotoSaveWithoutTextRequested();
 }
 
 class RetryRequested extends InsertionModalEvent {
