@@ -1,10 +1,7 @@
 import 'package:cerne/core/design_tokens.dart';
-import 'package:cerne/core/di/service_locator.dart';
-import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
-import 'package:cerne/features/capture/presentation/pages/insertion_modal_page.dart';
+import 'package:cerne/features/capture/presentation/widgets/open_insertion_modal.dart';
 import 'package:cerne/features/home/presentation/widgets/app_drawer.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// Fixed dark-green header (☰ + "Cerne" wordmark) and an empty conversation
 /// area, plus a composer bar that is rendered but fully disabled — no fake
@@ -38,17 +35,6 @@ class HomeChatShellPage extends StatelessWidget {
   }
 }
 
-void _openInsertionModal(BuildContext context) {
-  showModalBottomSheet<void>(
-    context: context,
-    isScrollControlled: true,
-    builder: (_) => BlocProvider(
-      create: (_) => getIt<InsertionModalBloc>(),
-      child: const InsertionModalPage(),
-    ),
-  );
-}
-
 class _ComposerBar extends StatelessWidget {
   const _ComposerBar();
 
@@ -63,7 +49,7 @@ class _ComposerBar extends StatelessWidget {
       child: Row(
         children: [
           IconButton(
-            onPressed: () => _openInsertionModal(context),
+            onPressed: () => openInsertionModal(context),
             icon: const Icon(Icons.add, color: DesignTokens.colorPrimary),
           ),
           Expanded(

@@ -36,6 +36,7 @@ void main() {
       () => dio.request<Map<String, dynamic>>(
         any(),
         data: any(named: 'data'),
+        queryParameters: any(named: 'queryParameters'),
         options: any(named: 'options'),
       ),
     ).thenAnswer(
@@ -52,6 +53,7 @@ void main() {
       () => dio.request<Map<String, dynamic>>(
         any(),
         data: any(named: 'data'),
+        queryParameters: any(named: 'queryParameters'),
         options: any(named: 'options'),
       ),
     ).thenThrow(exception);
@@ -67,6 +69,7 @@ void main() {
         () => dio.request<Map<String, dynamic>>(
           '$baseUrl/auth-login',
           data: any(named: 'data'),
+          queryParameters: any(named: 'queryParameters'),
           options: any(named: 'options'),
         ),
       ).called(1);
@@ -85,6 +88,41 @@ void main() {
         () => dio.request<Map<String, dynamic>>(
           '$baseUrl/records/123/items',
           data: any(named: 'data'),
+          queryParameters: any(named: 'queryParameters'),
+          options: any(named: 'options'),
+        ),
+      ).called(1);
+    });
+
+    test('passes queryParameters straight through to Dio.request() when provided', () async {
+      stubRequestSuccess({'data': <String, dynamic>{}});
+
+      await client.call(
+        'entries-list',
+        method: 'GET',
+        queryParameters: {'cursor': 'abc'},
+      );
+
+      verify(
+        () => dio.request<Map<String, dynamic>>(
+          any(),
+          data: any(named: 'data'),
+          queryParameters: {'cursor': 'abc'},
+          options: any(named: 'options'),
+        ),
+      ).called(1);
+    });
+
+    test('omits queryParameters (sends null) when not provided', () async {
+      stubRequestSuccess({'data': <String, dynamic>{}});
+
+      await client.call('entries-list', method: 'GET');
+
+      verify(
+        () => dio.request<Map<String, dynamic>>(
+          any(),
+          data: any(named: 'data'),
+          queryParameters: null,
           options: any(named: 'options'),
         ),
       ).called(1);
@@ -101,6 +139,7 @@ void main() {
         () => dio.request<Map<String, dynamic>>(
           any(),
           data: any(named: 'data'),
+          queryParameters: any(named: 'queryParameters'),
           options: captureAny(named: 'options'),
         ),
       ).captured;
@@ -117,6 +156,7 @@ void main() {
         () => dio.request<Map<String, dynamic>>(
           any(),
           data: any(named: 'data'),
+          queryParameters: any(named: 'queryParameters'),
           options: captureAny(named: 'options'),
         ),
       ).captured;
@@ -135,6 +175,7 @@ void main() {
         () => dio.request<Map<String, dynamic>>(
           any(),
           data: any(named: 'data'),
+          queryParameters: any(named: 'queryParameters'),
           options: captureAny(named: 'options'),
         ),
       ).captured;
@@ -182,6 +223,29 @@ void main() {
 
       expect(result.isRight(), isTrue);
       expect(result.getRight().toNullable(), equals(<String, dynamic>{}));
+    });
+
+    test('unwrapData: false returns the full decoded body verbatim, including '
+        'a list-shaped "data" and "meta"', () async {
+      stubRequestSuccess({
+        'data': [
+          {'id': '1'},
+        ],
+        'meta': {'nextCursor': 'xyz'},
+      });
+
+      final result = await client.call('entries-list', method: 'GET', unwrapData: false);
+
+      expect(result.isRight(), isTrue);
+      expect(
+        result.getRight().toNullable(),
+        equals({
+          'data': [
+            {'id': '1'},
+          ],
+          'meta': {'nextCursor': 'xyz'},
+        }),
+      );
     });
   });
 

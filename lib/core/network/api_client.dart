@@ -30,7 +30,15 @@ class ApiClient {
     required String method,
     Map<String, dynamic>? body,
     List<String>? pathSegments,
+    Map<String, dynamic>? queryParameters,
     AuthMode authMode = AuthMode.userSession,
+    // When false, returns the full decoded body (`{"data": ..., "meta":
+    // ...}`) verbatim instead of unwrapping/validating the inner "data"
+    // object. Needed by `entries-list`, whose "data" is an array (not an
+    // object) and whose "meta.nextCursor" every other call site has no use
+    // for and would otherwise be discarded. Every pre-existing call site
+    // omits this and is byte-for-byte unaffected.
+    bool unwrapData = true,
   }) async {
     final baseUrl = dotenv.env['FUNCTIONS_BASE_URL'] ?? '';
     final segments = [function, ...?pathSegments];
@@ -44,11 +52,15 @@ class ApiClient {
       final response = await _dio.request<Map<String, dynamic>>(
         url,
         data: body,
+        queryParameters: queryParameters,
         options: Options(
           method: method,
           headers: {'apikey': _anonKey, 'Authorization': 'Bearer $bearer'},
         ),
       );
+      if (!unwrapData) {
+        return Right(response.data ?? const {});
+      }
       final rawData = response.data?['data'];
       if (rawData != null && rawData is! Map<String, dynamic>) {
         return Left(

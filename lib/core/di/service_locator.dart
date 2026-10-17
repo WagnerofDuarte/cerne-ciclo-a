@@ -27,6 +27,7 @@ import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
 import 'package:cerne/features/entries/data/entries_repository_impl.dart';
 import 'package:cerne/features/entries/domain/repositories/entries_repository.dart';
 import 'package:cerne/features/entries/domain/usecases/create_entry_usecase.dart';
+import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
 import 'package:cerne/features/session/data/session_remote_data_source.dart';
 import 'package:cerne/features/session/data/session_repository_impl.dart';
 import 'package:cerne/features/session/domain/repositories/session_repository.dart';
@@ -168,10 +169,16 @@ void setupServiceLocator() {
     () => EntriesRemoteDataSource(getIt<ApiClient>()),
   );
   getIt.registerLazySingleton<EntriesRepository>(
-    () => EntriesRepositoryImpl(getIt<EntriesRemoteDataSource>()),
+    () => EntriesRepositoryImpl(
+      getIt<EntriesRemoteDataSource>(),
+      sessionRepository: getIt<SessionRepository>(),
+    ),
   );
   getIt.registerLazySingleton<CreateEntryUseCase>(
     () => CreateEntryUseCase(getIt<EntriesRepository>()),
+  );
+  getIt.registerFactory<RecordsBloc>(
+    () => RecordsBloc(entriesRepository: getIt<EntriesRepository>()),
   );
 
   // Capture (P-RF01)

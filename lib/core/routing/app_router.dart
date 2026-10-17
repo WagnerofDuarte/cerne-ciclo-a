@@ -3,7 +3,9 @@ import 'package:cerne/core/routing/app_routes.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:cerne/features/auth/presentation/pages/login_signup_page.dart';
 import 'package:cerne/features/home/presentation/pages/home_chat_shell_page.dart';
-import 'package:cerne/features/records/presentation/pages/records_placeholder_page.dart';
+import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
+import 'package:cerne/features/records/presentation/bloc/records_event.dart';
+import 'package:cerne/features/records/presentation/pages/records_page.dart';
 import 'package:cerne/features/settings/presentation/pages/settings_placeholder_page.dart';
 import 'package:cerne/features/splash/presentation/pages/splash_page.dart';
 import 'package:cerne/features/vault/presentation/bloc/vault_bloc.dart';
@@ -45,7 +47,10 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: AppRoutes.records,
-      builder: (context, state) => const RecordsPlaceholderPage(),
+      builder: (context, state) => BlocProvider<RecordsBloc>(
+        create: (_) => getIt<RecordsBloc>()..add(const RecordsStarted()),
+        child: const RecordsPage(),
+      ),
     ),
     GoRoute(
       path: AppRoutes.settings,

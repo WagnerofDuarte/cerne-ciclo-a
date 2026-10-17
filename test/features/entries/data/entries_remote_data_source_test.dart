@@ -107,4 +107,160 @@ void main() {
     expect(result.isLeft(), isTrue);
     expect(result.getLeft().toNullable(), isA<ValidationFailure>());
   });
+
+  group('list()', () {
+    void stubListCall(Either<Failure, Map<String, dynamic>> result) {
+      when(
+        () => apiClient.call(
+          'entries-list',
+          method: any(named: 'method'),
+          body: any(named: 'body'),
+          pathSegments: any(named: 'pathSegments'),
+          queryParameters: any(named: 'queryParameters'),
+          authMode: any(named: 'authMode'),
+          unwrapData: any(named: 'unwrapData'),
+        ),
+      ).thenAnswer((_) async => result);
+    }
+
+    test('list(cursor: "abc") sends queryParameters: {cursor: "abc"}', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+
+      await dataSource.list(cursor: 'abc');
+
+      verify(
+        () => apiClient.call(
+          'entries-list',
+          method: 'GET',
+          queryParameters: {'cursor': 'abc'},
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('list() with no cursor sends queryParameters: null', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+
+      await dataSource.list();
+
+      verify(
+        () => apiClient.call(
+          'entries-list',
+          method: 'GET',
+          queryParameters: null,
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('parses data + meta.nextCursor into an EntriesPage', () async {
+      stubListCall(Right({
+        'data': [validData],
+        'meta': {'nextCursor': 'next-1'},
+      }));
+
+      final result = await dataSource.list();
+
+      expect(result.isRight(), isTrue);
+      final page = result.toNullable()!;
+      expect(page.entries, hasLength(1));
+      expect(page.entries.single.id, 'entry-1');
+      expect(page.nextCursor, 'next-1');
+    });
+
+    test('a null meta.nextCursor means the last page', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+
+      final result = await dataSource.list();
+
+      expect(result.toNullable()!.nextCursor, isNull);
+    });
+
+    test('a response containing a chat-sourced entry parses to EntrySource.chat '
+        'without throwing', () async {
+      final chatEntry = {...validData, 'source': 'chat'};
+      stubListCall(Right({
+        'data': [chatEntry],
+        'meta': {'nextCursor': null},
+      }));
+
+      final result = await dataSource.list();
+
+      expect(result.isRight(), isTrue);
+      expect(result.toNullable()!.entries.single.source, EntrySource.chat);
+    });
+
+    test('a malformed response maps to ValidationFailure', () async {
+      stubListCall(const Right({'unexpected': true}));
+
+      final result = await dataSource.list();
+
+      expect(result.isLeft(), isTrue);
+      expect(result.getLeft().toNullable(), isA<ValidationFailure>());
+    });
+
+    test('a non-auth failure passes through unchanged', () async {
+      const failure = NetworkTimeoutFailure(message: 'timed out', requestId: 'r1');
+      stubListCall(const Left(failure));
+
+      final result = await dataSource.list();
+
+      expect(result, const Left<Failure, dynamic>(failure));
+    });
+  });
+
+  group('getById()', () {
+    void stubGetByIdCall(Either<Failure, Map<String, dynamic>> result) {
+      when(
+        () => apiClient.call(
+          'entries-get',
+          method: any(named: 'method'),
+          body: any(named: 'body'),
+          pathSegments: any(named: 'pathSegments'),
+          authMode: any(named: 'authMode'),
+        ),
+      ).thenAnswer((_) async => result);
+    }
+
+    test('calls apiClient.call(entries-get, ..., pathSegments: [id])', () async {
+      stubGetByIdCall(Right(validData));
+
+      await dataSource.getById('entry-1');
+
+      verify(
+        () => apiClient.call(
+          'entries-get',
+          method: 'GET',
+          pathSegments: ['entry-1'],
+        ),
+      ).called(1);
+    });
+
+    test('parses a valid success body into Entry', () async {
+      stubGetByIdCall(Right(validData));
+
+      final result = await dataSource.getById('entry-1');
+
+      expect(result.isRight(), isTrue);
+      expect(result.toNullable()!.id, 'entry-1');
+    });
+
+    test('a malformed response maps to ValidationFailure', () async {
+      stubGetByIdCall(const Right({'unexpected': true}));
+
+      final result = await dataSource.getById('entry-1');
+
+      expect(result.isLeft(), isTrue);
+      expect(result.getLeft().toNullable(), isA<ValidationFailure>());
+    });
+
+    test('a non-auth failure passes through unchanged', () async {
+      const failure = NetworkOfflineFailure(message: 'no connection', requestId: 'r2');
+      stubGetByIdCall(const Left(failure));
+
+      final result = await dataSource.getById('entry-1');
+
+      expect(result, const Left<Failure, Entry>(failure));
+    });
+  });
 }

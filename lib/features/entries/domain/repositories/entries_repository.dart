@@ -1,4 +1,5 @@
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/features/entries/domain/entities/entries_page.dart';
 import 'package:cerne/features/entries/domain/entities/entry.dart';
 import 'package:fpdart/fpdart.dart';
 
@@ -16,4 +17,13 @@ abstract class EntriesRepository {
   /// lifetime. Nothing in this unit ever reads this back out for display;
   /// it exists so RF07 has something to read from day one.
   List<Entry> get cachedEntries;
+
+  /// `GET /entries` (`entries-list`), paginated newest-occurred-first.
+  /// Retries exactly once through `SessionRepository.refresh()` on
+  /// `AuthExpiredFailure` before giving up (research.md R4).
+  Future<Either<Failure, EntriesPage>> list({String? cursor});
+
+  /// `GET /entries/:id` (`entries-get`). Implemented and tested; no call
+  /// site in this unit's UI flow (research.md R7).
+  Future<Either<Failure, Entry>> getById(String id);
 }

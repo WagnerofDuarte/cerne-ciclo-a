@@ -1,8 +1,11 @@
 import 'package:equatable/equatable.dart';
 
-/// `chat` is RF10's own addition — this unit creates only these three
-/// (research.md R8).
-enum EntrySource { manual, audio, photo }
+/// `chat` exists here even though no capture flow in this unit ever produces
+/// one — `GET /entries` is origin-agnostic and can return a `chat`-sourced
+/// entry (e.g., from seed/test data) before RF04/RF10 (the features that
+/// will eventually create one) exist, so parsing must recognize all four
+/// values rather than throwing on the fourth (research.md R2).
+enum EntrySource { manual, audio, photo, chat }
 
 enum PiiStatus { pending, clean, flagged, failed }
 
