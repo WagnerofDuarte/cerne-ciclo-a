@@ -50,6 +50,7 @@ class Entry extends Equatable {
     required this.serverRevision,
     required this.createdAt,
     required this.updatedAt,
+    this.similarity,
   });
 
   final String id;
@@ -66,6 +67,10 @@ class Entry extends Equatable {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  /// 0.0–1.0, only ever non-null when parsed from `entries-search`'s
+  /// response (data-model.md).
+  final double? similarity;
+
   @override
   List<Object?> get props => [
     id,
@@ -81,5 +86,6 @@ class Entry extends Equatable {
     serverRevision,
     createdAt,
     updatedAt,
+    similarity,
   ];
 }

@@ -1,11 +1,17 @@
 import 'dart:async';
 
 import 'package:cerne/core/design_tokens.dart';
+import 'package:cerne/core/network/failure.dart';
 import 'package:cerne/features/capture/presentation/widgets/open_insertion_modal.dart';
+import 'package:cerne/features/entries/domain/entities/entry.dart';
 import 'package:cerne/features/records/domain/entities/date_group.dart';
+import 'package:cerne/features/records/domain/entities/date_range_filter.dart';
 import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
 import 'package:cerne/features/records/presentation/bloc/records_event.dart';
 import 'package:cerne/features/records/presentation/bloc/records_state.dart';
+import 'package:cerne/features/records/presentation/widgets/active_filter_chips_row.dart';
+import 'package:cerne/features/records/presentation/widgets/filter_sheet.dart';
+import 'package:cerne/features/records/presentation/widgets/no_results_for_criteria_view.dart';
 import 'package:cerne/features/records/presentation/widgets/record_card.dart';
 import 'package:cerne/features/records/presentation/widgets/records_empty_state.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
@@ -67,6 +73,47 @@ class _RecordsPageState extends State<RecordsPage> {
           children: [
             _Header(),
             _SearchBar(),
+            BlocBuilder<RecordsBloc, RecordsState>(
+              builder: (context, state) {
+                final isOffline = state is RecordsLoaded &&
+                    (state.pageLoadFailure is NetworkOfflineFailure ||
+                        state.criteriaLoadFailure is NetworkOfflineFailure);
+                if (!isOffline) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    DesignTokens.spacingMd,
+                    0,
+                    DesignTokens.spacingMd,
+                    DesignTokens.spacingSm,
+                  ),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Busca limitada ao que está salvo no aparelho.',
+                      style: DesignTokens.textBodyMd.copyWith(
+                        color: DesignTokens.colorInfoOffline,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            BlocBuilder<RecordsBloc, RecordsState>(
+              builder: (context, state) {
+                if (state is! RecordsLoaded || state.activeChips.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    DesignTokens.spacingMd,
+                    0,
+                    DesignTokens.spacingMd,
+                    DesignTokens.spacingMd,
+                  ),
+                  child: ActiveFilterChipsRow(chips: state.activeChips),
+                );
+              },
+            ),
             Expanded(
               child: BlocBuilder<RecordsBloc, RecordsState>(
                 builder: (context, state) => switch (state) {
@@ -90,6 +137,12 @@ class _RecordsPageState extends State<RecordsPage> {
   }
 
   Widget _buildLoaded(BuildContext context, RecordsLoaded loaded) {
+    if (loaded.isEmptyForCriteria) {
+      return NoResultsForCriteriaView(
+        onAdjustPressed: () =>
+            context.read<RecordsBloc>().add(const FiltersAndSearchCleared()),
+      );
+    }
     if (loaded.isEmpty) {
       return RecordsEmptyState(onCreatePressed: () => _openEmptyStateCreate(context));
     }
@@ -99,6 +152,21 @@ class _RecordsPageState extends State<RecordsPage> {
     return CustomScrollView(
       controller: _scrollController,
       slivers: [
+        if (loaded.isApplyingCriteria)
+          const SliverPadding(
+            padding: EdgeInsets.all(DesignTokens.spacingMd),
+            sliver: SliverToBoxAdapter(child: Center(child: CircularProgressIndicator())),
+          ),
+        if (loaded.criteriaLoadFailure != null)
+          SliverPadding(
+            padding: const EdgeInsets.all(DesignTokens.spacingMd),
+            sliver: SliverToBoxAdapter(
+              child: _RetryBanner(
+                message: loaded.criteriaLoadFailure!.message,
+                onRetry: () => context.read<RecordsBloc>().add(const CriteriaLoadRetried()),
+              ),
+            ),
+          ),
         for (final group in groups) _dateGroupSliver(group),
         if (loaded.isLoadingMore)
           const SliverPadding(
@@ -171,6 +239,11 @@ class _SearchBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final state = context.watch<RecordsBloc>().state;
+    final dateRange = state is RecordsLoaded ? state.dateRange : DateRangeOption.allTime;
+    final entryTypes = state is RecordsLoaded ? state.entryTypes : const <EntrySource>{};
+    final hasActiveFilters = state is RecordsLoaded && state.hasActiveFilters;
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(
         DesignTokens.spacingMd,
@@ -182,7 +255,9 @@ class _SearchBar extends StatelessWidget {
         children: [
           Expanded(
             child: TextField(
-              enabled: false,
+              enabled: true,
+              onChanged: (text) =>
+                  context.read<RecordsBloc>().add(SearchTextChanged(text)),
               decoration: const InputDecoration(
                 hintText: 'Buscar nos registros...',
                 prefixIcon: Icon(
@@ -198,12 +273,22 @@ class _SearchBar extends StatelessWidget {
             ),
           ),
           const SizedBox(width: DesignTokens.spacingSm),
-          // Inert placeholder — no filter sheet in this unit (FR-008).
           IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.filter_alt_outlined, color: DesignTokens.colorTextPrimary),
+            onPressed: () => _openFilterSheet(
+              context,
+              dateRange: dateRange,
+              entryTypes: entryTypes,
+            ),
+            icon: Icon(
+              Icons.filter_alt,
+              color: hasActiveFilters
+                  ? DesignTokens.colorOnAccent
+                  : DesignTokens.colorTextPrimary,
+            ),
             style: IconButton.styleFrom(
-              backgroundColor: DesignTokens.colorSurfaceElevated,
+              backgroundColor: hasActiveFilters
+                  ? DesignTokens.colorAccent
+                  : DesignTokens.colorSurfaceElevated,
               side: const BorderSide(color: DesignTokens.colorBorder),
               shape: const CircleBorder(),
               fixedSize: const Size(40, 40),
@@ -212,6 +297,24 @@ class _SearchBar extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _openFilterSheet(
+    BuildContext context, {
+    required DateRangeOption dateRange,
+    required Set<EntrySource> entryTypes,
+  }) async {
+    final bloc = context.read<RecordsBloc>();
+    final result =
+        await showModalBottomSheet<({DateRangeOption dateRange, Set<EntrySource> entryTypes})>(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) =>
+              FilterSheet(initialDateRange: dateRange, initialEntryTypes: entryTypes),
+        );
+    if (result != null) {
+      bloc.add(FilterSheetApplied(dateRange: result.dateRange, entryTypes: result.entryTypes));
+    }
   }
 }
 

@@ -83,9 +83,13 @@ class ApiClient {
       DioExceptionType.receiveTimeout,
     };
 
+    // `e.message` is Dio's own internal exception text (e.g. "Failed host
+    // lookup") — never shown to the user; both client-synthesized failures
+    // below carry a fixed, user-facing message instead, same as every
+    // backend-mapped `Failure` already does via `ErrorMapper`.
     if (timeoutTypes.contains(e.type)) {
-      return NetworkTimeoutFailure(
-        message: e.message ?? 'Request timed out',
+      return const NetworkTimeoutFailure(
+        message: 'A conexão demorou demais. Tente novamente.',
         requestId: '',
       );
     }
@@ -97,8 +101,8 @@ class ApiClient {
 
     // No response at all (connection error) — NETWORK_OFFLINE never arrives
     // as an HTTP response, so it is synthesized client-side here.
-    return NetworkOfflineFailure(
-      message: e.message ?? 'No connection',
+    return const NetworkOfflineFailure(
+      message: 'Sem conexão com a internet.',
       requestId: '',
     );
   }

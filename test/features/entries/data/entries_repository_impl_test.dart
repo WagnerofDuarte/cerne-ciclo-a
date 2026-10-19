@@ -1,5 +1,6 @@
 import 'package:cerne/core/network/failure.dart';
 import 'package:cerne/features/auth/domain/entities/account.dart';
+import 'package:cerne/features/entries/data/entries_local_cache.dart';
 import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
 import 'package:cerne/features/entries/data/entries_repository_impl.dart';
 import 'package:cerne/features/entries/domain/entities/entries_page.dart';
@@ -14,8 +15,10 @@ class MockEntriesRemoteDataSource extends Mock implements EntriesRemoteDataSourc
 
 class MockSessionRepository extends Mock implements SessionRepository {}
 
-Entry _buildEntry() => Entry(
-  id: 'entry-1',
+class MockEntriesLocalCache extends Mock implements EntriesLocalCache {}
+
+Entry _buildEntry({String id = 'entry-1'}) => Entry(
+  id: id,
   content: 'hello',
   source: EntrySource.manual,
   chatMessageId: null,
@@ -41,24 +44,46 @@ Session _buildSession() => const Session(
 void main() {
   late MockEntriesRemoteDataSource remoteDataSource;
   late MockSessionRepository sessionRepository;
+  late MockEntriesLocalCache localCache;
   late EntriesRepositoryImpl repository;
 
   setUpAll(() {
     registerFallbackValue(EntrySource.manual);
+    registerFallbackValue(<Entry>[]);
   });
 
   setUp(() {
     remoteDataSource = MockEntriesRemoteDataSource();
     sessionRepository = MockSessionRepository();
+    localCache = MockEntriesLocalCache();
+    when(() => localCache.readAll()).thenAnswer((_) async => const []);
+    when(() => localCache.writeAll(any())).thenAnswer((_) async {});
     repository = EntriesRepositoryImpl(
       remoteDataSource,
       sessionRepository: sessionRepository,
+      localCache: localCache,
     );
   });
 
   test('cachedEntries starts empty', () {
     expect(repository.cachedEntries, isEmpty);
   });
+
+  test(
+    'cachedEntries reflects whatever EntriesLocalCache had persisted, once '
+    'any repository method has run',
+    () async {
+      final persisted = _buildEntry(id: 'persisted-1');
+      when(() => localCache.readAll()).thenAnswer((_) async => [persisted]);
+      when(
+        () => remoteDataSource.list(cursor: any(named: 'cursor')),
+      ).thenAnswer((_) async => const Left(NetworkOfflineFailure(message: 'offline', requestId: '')));
+
+      await repository.list();
+
+      expect(repository.cachedEntries, [persisted]);
+    },
+  );
 
   test('a successful create() appends the entry to cachedEntries', () async {
     final entry = _buildEntry();
@@ -76,6 +101,7 @@ void main() {
 
     expect(result, Right<Failure, Entry>(entry));
     expect(repository.cachedEntries, [entry]);
+    verify(() => localCache.writeAll([entry])).called(1);
   });
 
   test('timeout failure passes through unchanged and nothing is cached', () async {
@@ -144,6 +170,8 @@ void main() {
 
       expect(result, Right<Failure, EntriesPage>(page));
       verifyNever(() => sessionRepository.refresh());
+      expect(repository.cachedEntries, page.entries);
+      verify(() => localCache.writeAll(page.entries)).called(1);
     });
 
     test(
@@ -163,6 +191,7 @@ void main() {
         expect(result, Right<Failure, EntriesPage>(page));
         expect(callCount, 2);
         verify(() => sessionRepository.refresh()).called(1);
+        expect(repository.cachedEntries, page.entries);
       },
     );
 
@@ -197,6 +226,8 @@ void main() {
 
       expect(result, const Left<Failure, EntriesPage>(failure));
       verifyNever(() => sessionRepository.refresh());
+      expect(repository.cachedEntries, isEmpty);
+      verifyNever(() => localCache.writeAll(any()));
     });
 
     test('passes the cursor straight through to the remote data source', () async {
@@ -207,6 +238,98 @@ void main() {
       await repository.list(cursor: 'abc');
 
       verify(() => remoteDataSource.list(cursor: 'abc')).called(1);
+    });
+
+    test('passes source/dateFrom/dateTo straight through to the remote data '
+        'source unchanged', () async {
+      final from = DateTime.utc(2026, 10, 1);
+      final to = DateTime.utc(2026, 10, 15);
+      when(
+        () => remoteDataSource.list(
+          source: any(named: 'source'),
+          dateFrom: any(named: 'dateFrom'),
+          dateTo: any(named: 'dateTo'),
+        ),
+      ).thenAnswer((_) async => Right(page));
+
+      await repository.list(source: EntrySource.audio, dateFrom: from, dateTo: to);
+
+      verify(
+        () => remoteDataSource.list(source: EntrySource.audio, dateFrom: from, dateTo: to),
+      ).called(1);
+    });
+  });
+
+  group('search()', () {
+    final entries = [_buildEntry()];
+
+    test('success on the first attempt returns Right with no refresh call made', () async {
+      when(
+        () => remoteDataSource.search(q: any(named: 'q')),
+      ).thenAnswer((_) async => Right(entries));
+
+      final result = await repository.search(q: 'ansiedade');
+
+      expect(result, Right<Failure, List<Entry>>(entries));
+      verifyNever(() => sessionRepository.refresh());
+      expect(repository.cachedEntries, entries);
+      verify(() => localCache.writeAll(entries)).called(1);
+    });
+
+    test(
+      'AuthExpiredFailure followed by a successful refresh retries and returns '
+      'Right, with exactly 2 remote calls and 1 refresh call',
+      () async {
+        const authExpired = AuthExpiredFailure(message: 'expired', requestId: 'r1');
+        var callCount = 0;
+        when(() => remoteDataSource.search(q: any(named: 'q'))).thenAnswer((_) async {
+          callCount++;
+          return callCount == 1 ? const Left(authExpired) : Right(entries);
+        });
+        when(() => sessionRepository.refresh()).thenAnswer((_) async => Right(_buildSession()));
+
+        final result = await repository.search(q: 'ansiedade');
+
+        expect(result, Right<Failure, List<Entry>>(entries));
+        expect(callCount, 2);
+        verify(() => sessionRepository.refresh()).called(1);
+        expect(repository.cachedEntries, entries);
+      },
+    );
+
+    test(
+      'AuthExpiredFailure followed by a refresh that itself fails returns '
+      'Left(AuthExpiredFailure), no second refresh attempt',
+      () async {
+        const authExpired = AuthExpiredFailure(message: 'expired', requestId: 'r1');
+        when(
+          () => remoteDataSource.search(q: any(named: 'q')),
+        ).thenAnswer((_) async => const Left(authExpired));
+        when(() => sessionRepository.refresh()).thenAnswer(
+          (_) async => const Left(AuthInvalidFailure(message: 'no token', requestId: '')),
+        );
+
+        final result = await repository.search(q: 'ansiedade');
+
+        expect(result.isLeft(), isTrue);
+        expect(result.getLeft().toNullable(), isA<AuthExpiredFailure>());
+        verify(() => sessionRepository.refresh()).called(1);
+        verify(() => remoteDataSource.search(q: any(named: 'q'))).called(1);
+      },
+    );
+
+    test('any other failure code passes through unchanged with no refresh attempted', () async {
+      const failure = NetworkTimeoutFailure(message: 'timed out', requestId: 'r1');
+      when(
+        () => remoteDataSource.search(q: any(named: 'q')),
+      ).thenAnswer((_) async => const Left(failure));
+
+      final result = await repository.search(q: 'ansiedade');
+
+      expect(result, const Left<Failure, List<Entry>>(failure));
+      verifyNever(() => sessionRepository.refresh());
+      expect(repository.cachedEntries, isEmpty);
+      verifyNever(() => localCache.writeAll(any()));
     });
   });
 

@@ -207,6 +207,169 @@ void main() {
 
       expect(result, const Left<Failure, dynamic>(failure));
     });
+
+    test('list(source: EntrySource.audio) sends queryParameters: {source: '
+        '"audio"}, no dateFrom/dateTo/limit keys', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+
+      await dataSource.list(source: EntrySource.audio);
+
+      verify(
+        () => apiClient.call(
+          'entries-list',
+          method: 'GET',
+          queryParameters: {'source': 'audio'},
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('list(dateFrom:, dateTo:) sends both as UTC ISO-8601 strings', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+      final from = DateTime.utc(2026, 10, 1);
+      final to = DateTime.utc(2026, 10, 15);
+
+      await dataSource.list(dateFrom: from, dateTo: to);
+
+      verify(
+        () => apiClient.call(
+          'entries-list',
+          method: 'GET',
+          queryParameters: {
+            'dateFrom': from.toUtc().toIso8601String(),
+            'dateTo': to.toUtc().toIso8601String(),
+          },
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('list() with every new param omitted sends queryParameters: null '
+        '(no regression from RF07\'s original call shape)', () async {
+      stubListCall(Right({'data': <dynamic>[], 'meta': {'nextCursor': null}}));
+
+      await dataSource.list();
+
+      verify(
+        () => apiClient.call(
+          'entries-list',
+          method: 'GET',
+          queryParameters: null,
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('a response including a similarity value parses into a non-null '
+        'Entry.similarity', () async {
+      stubListCall(Right({
+        'data': [
+          {...validData, 'similarity': 0.87},
+        ],
+        'meta': {'nextCursor': null},
+      }));
+
+      final result = await dataSource.list();
+
+      expect(result.toNullable()!.entries.single.similarity, 0.87);
+    });
+
+    test('a response omitting similarity parses to Entry.similarity == null', () async {
+      stubListCall(Right({
+        'data': [validData],
+        'meta': {'nextCursor': null},
+      }));
+
+      final result = await dataSource.list();
+
+      expect(result.toNullable()!.entries.single.similarity, isNull);
+    });
+  });
+
+  group('search()', () {
+    void stubSearchCall(Either<Failure, Map<String, dynamic>> result) {
+      when(
+        () => apiClient.call(
+          'entries-search',
+          method: any(named: 'method'),
+          body: any(named: 'body'),
+          pathSegments: any(named: 'pathSegments'),
+          queryParameters: any(named: 'queryParameters'),
+          authMode: any(named: 'authMode'),
+          unwrapData: any(named: 'unwrapData'),
+        ),
+      ).thenAnswer((_) async => result);
+    }
+
+    test('search(q: "ansiedade") sends q and the default limit: 50, no '
+        'source/dateFrom/dateTo', () async {
+      stubSearchCall(Right({'data': <dynamic>[]}));
+
+      await dataSource.search(q: 'ansiedade');
+
+      verify(
+        () => apiClient.call(
+          'entries-search',
+          method: 'GET',
+          queryParameters: {'q': 'ansiedade', 'limit': '50'},
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('a response similarity value parses into a non-null Entry.similarity', () async {
+      stubSearchCall(Right({
+        'data': [
+          {...validData, 'similarity': 0.42},
+        ],
+      }));
+
+      final result = await dataSource.search(q: 'ansiedade');
+
+      expect(result.toNullable()!.single.similarity, 0.42);
+    });
+
+    test('a response omitting similarity parses to Entry.similarity == null', () async {
+      stubSearchCall(Right({'data': [validData]}));
+
+      final result = await dataSource.search(q: 'ansiedade');
+
+      expect(result.toNullable()!.single.similarity, isNull);
+    });
+
+    test('an empty q string omits the q key entirely (never sends q=)', () async {
+      stubSearchCall(Right({'data': <dynamic>[]}));
+
+      await dataSource.search(q: '');
+
+      verify(
+        () => apiClient.call(
+          'entries-search',
+          method: 'GET',
+          queryParameters: {'limit': '50'},
+          unwrapData: false,
+        ),
+      ).called(1);
+    });
+
+    test('a malformed entries-search response maps to ValidationFailure, not '
+        'a thrown exception', () async {
+      stubSearchCall(const Right({'unexpected': true}));
+
+      final result = await dataSource.search(q: 'ansiedade');
+
+      expect(result.isLeft(), isTrue);
+      expect(result.getLeft().toNullable(), isA<ValidationFailure>());
+    });
+
+    test('a non-auth failure passes through unchanged', () async {
+      const failure = NetworkTimeoutFailure(message: 'timed out', requestId: 'r1');
+      stubSearchCall(const Left(failure));
+
+      final result = await dataSource.search(q: 'ansiedade');
+
+      expect(result, const Left<Failure, dynamic>(failure));
+    });
   });
 
   group('getById()', () {

@@ -31,11 +31,24 @@ class EntriesRemoteDataSource {
     return result.flatMap(_parseEntry);
   }
 
-  Future<Either<Failure, EntriesPage>> list({String? cursor}) async {
+  Future<Either<Failure, EntriesPage>> list({
+    String? cursor,
+    EntrySource? source,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+    int? limit,
+  }) async {
+    final queryParameters = <String, String>{
+      'cursor': ?cursor,
+      'source': ?source?.name,
+      'dateFrom': ?dateFrom?.toUtc().toIso8601String(),
+      'dateTo': ?dateTo?.toUtc().toIso8601String(),
+      'limit': ?limit?.toString(),
+    };
     final result = await _apiClient.call(
       'entries-list',
       method: 'GET',
-      queryParameters: cursor == null ? null : {'cursor': cursor},
+      queryParameters: queryParameters.isEmpty ? null : queryParameters,
       unwrapData: false,
     );
 
@@ -50,6 +63,42 @@ class EntriesRemoteDataSource {
     );
 
     return result.flatMap(_parseEntry);
+  }
+
+  Future<Either<Failure, List<Entry>>> search({
+    String? q,
+    EntrySource? source,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+    int limit = 50,
+  }) async {
+    final result = await _apiClient.call(
+      'entries-search',
+      method: 'GET',
+      queryParameters: {
+        if (q != null && q.isNotEmpty) 'q': q,
+        if (source != null) 'source': source.name,
+        if (dateFrom != null) 'dateFrom': dateFrom.toUtc().toIso8601String(),
+        if (dateTo != null) 'dateTo': dateTo.toUtc().toIso8601String(),
+        'limit': limit.toString(),
+      },
+      unwrapData: false,
+    );
+
+    return result.flatMap(_parseSearchResults);
+  }
+
+  Either<Failure, List<Entry>> _parseSearchResults(Map<String, dynamic> body) {
+    try {
+      final entries = (body['data'] as List<dynamic>)
+          .map((e) => _parseEntryFields(e as Map<String, dynamic>))
+          .toList();
+      return Right(entries);
+    } on TypeError {
+      return const Left(_malformedEntriesFailure);
+    } on FormatException {
+      return const Left(_malformedEntriesFailure);
+    }
   }
 
   Either<Failure, Entry> _parseEntry(Map<String, dynamic> data) {
@@ -116,6 +165,7 @@ class EntriesRemoteDataSource {
       serverRevision: data['serverRevision'] as int,
       createdAt: DateTime.parse(data['createdAt'] as String),
       updatedAt: DateTime.parse(data['updatedAt'] as String),
+      similarity: (data['similarity'] as num?)?.toDouble(),
     );
   }
 }

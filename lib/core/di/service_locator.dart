@@ -23,6 +23,7 @@ import 'package:cerne/features/capture/domain/usecases/confirm_entry_save_usecas
 import 'package:cerne/features/capture/domain/usecases/recognize_photo_usecase.dart';
 import 'package:cerne/features/capture/domain/usecases/save_text_entry_usecase.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
+import 'package:cerne/features/entries/data/entries_local_cache.dart';
 import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
 import 'package:cerne/features/entries/data/entries_repository_impl.dart';
 import 'package:cerne/features/entries/domain/repositories/entries_repository.dart';
@@ -168,10 +169,12 @@ void setupServiceLocator() {
   getIt.registerLazySingleton<EntriesRemoteDataSource>(
     () => EntriesRemoteDataSource(getIt<ApiClient>()),
   );
+  getIt.registerLazySingleton<EntriesLocalCache>(EntriesLocalCache.new);
   getIt.registerLazySingleton<EntriesRepository>(
     () => EntriesRepositoryImpl(
       getIt<EntriesRemoteDataSource>(),
       sessionRepository: getIt<SessionRepository>(),
+      localCache: getIt<EntriesLocalCache>(),
     ),
   );
   getIt.registerLazySingleton<CreateEntryUseCase>(
