@@ -23,6 +23,12 @@ import 'package:cerne/features/capture/domain/usecases/confirm_entry_save_usecas
 import 'package:cerne/features/capture/domain/usecases/recognize_photo_usecase.dart';
 import 'package:cerne/features/capture/domain/usecases/save_text_entry_usecase.dart';
 import 'package:cerne/features/capture/presentation/bloc/insertion_modal_bloc.dart';
+import 'package:cerne/features/chat/data/chat_local_cache.dart';
+import 'package:cerne/features/chat/data/chat_remote_data_source.dart';
+import 'package:cerne/features/chat/data/chat_repository_impl.dart';
+import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_sessions_bloc.dart';
 import 'package:cerne/features/entries/data/entries_local_cache.dart';
 import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
 import 'package:cerne/features/entries/data/entries_repository_impl.dart';
@@ -56,7 +62,19 @@ final GetIt getIt = GetIt.instance;
 /// Manual `get_it` registration, no code generation (research.md R4).
 void setupServiceLocator() {
   getIt.registerLazySingleton<Dio>(() {
-    final dio = Dio();
+    // Bounded timeouts (none were set before) — without them a dropped
+    // connection never produces a `DioException` at all: `handleResponseStream`
+    // (dio's stream adapter) skips its per-chunk receive timer entirely when
+    // `receiveTimeout` is unset, so a radio going down mid-SSE-stream just
+    // stalls the socket forever instead of surfacing as the `NetworkTimeoutFailure`
+    // `ApiClient._mapException` already knows how to map.
+    final dio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 15),
+        sendTimeout: const Duration(seconds: 15),
+        receiveTimeout: const Duration(seconds: 30),
+      ),
+    );
     if (kDebugMode) {
       // ApiClient maps every DioException to a Failure and never rethrows,
       // so without this nothing about a failed call reaches the terminal.
@@ -182,6 +200,28 @@ void setupServiceLocator() {
   );
   getIt.registerFactory<RecordsBloc>(
     () => RecordsBloc(entriesRepository: getIt<EntriesRepository>()),
+  );
+
+  // Chat (P-RF04)
+  getIt.registerLazySingleton<ChatLocalCache>(ChatLocalCache.new);
+  getIt.registerLazySingleton<ChatRemoteDataSource>(
+    () => ChatRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<ChatRepository>(
+    () => ChatRepositoryImpl(
+      getIt<ChatRemoteDataSource>(),
+      sessionRepository: getIt<SessionRepository>(),
+      localCache: getIt<ChatLocalCache>(),
+    ),
+  );
+  getIt.registerFactory<ChatBloc>(
+    () => ChatBloc(
+      chatRepository: getIt<ChatRepository>(),
+      connectivityChecker: getIt<ConnectivityChecker>(),
+    ),
+  );
+  getIt.registerFactory<ChatSessionsBloc>(
+    () => ChatSessionsBloc(chatRepository: getIt<ChatRepository>()),
   );
 
   // Capture (P-RF01)

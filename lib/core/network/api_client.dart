@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:cerne/core/network/error_mapper.dart';
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/core/network/sse_frame.dart';
 import 'package:cerne/core/storage/secure_token_storage.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -74,6 +77,80 @@ class ApiClient {
     } on DioException catch (e) {
       return Left(_mapException(e));
     }
+  }
+
+  /// Generic SSE transport (research.md R1) — knows nothing about chat
+  /// specifically; any future SSE-consuming unit reuses it as-is. Never
+  /// throws past this boundary: a transport failure becomes the stream's one
+  /// and only `Left(Failure)` item, yielded last, then the stream closes.
+  Stream<Either<Failure, SseFrame>> sseStream(
+    String function, {
+    required String method,
+    Map<String, dynamic>? body,
+    List<String>? pathSegments,
+    AuthMode authMode = AuthMode.userSession,
+  }) async* {
+    final baseUrl = dotenv.env['FUNCTIONS_BASE_URL'] ?? '';
+    final segments = [function, ...?pathSegments];
+    final url = '$baseUrl/${segments.join('/')}';
+
+    final bearer = authMode == AuthMode.anonKey
+        ? _anonKey
+        : (await _tokenStorage.readAccessToken() ?? '');
+
+    try {
+      final response = await _dio.request<ResponseBody>(
+        url,
+        data: body,
+        options: Options(
+          method: method,
+          responseType: ResponseType.stream,
+          headers: {'apikey': _anonKey, 'Authorization': 'Bearer $bearer'},
+        ),
+      );
+
+      final buffer = StringBuffer();
+      // A bound `Utf8Decoder` (not a per-chunk `utf8.decode`) — a
+      // multi-byte character (any accented letter, routine in Portuguese
+      // text) can straddle two network reads; binding it to the byte stream
+      // carries an incomplete trailing sequence over to the next chunk
+      // instead of mangling it into replacement characters. `allowMalformed`
+      // keeps this boundary's "never throws" guarantee for truly invalid
+      // bytes, same as the per-chunk decode this replaces.
+      const decoder = Utf8Decoder(allowMalformed: true);
+      await for (final chunk in decoder.bind(response.data!.stream)) {
+        buffer.write(chunk);
+        var text = buffer.toString();
+        while (text.contains('\n\n')) {
+          final splitIndex = text.indexOf('\n\n');
+          final rawFrame = text.substring(0, splitIndex);
+          text = text.substring(splitIndex + 2);
+          final frame = _parseFrame(rawFrame);
+          if (frame != null) yield Right(frame);
+        }
+        buffer
+          ..clear()
+          ..write(text);
+      }
+    } on DioException catch (e) {
+      yield Left(_mapException(e));
+    }
+  }
+
+  SseFrame? _parseFrame(String rawFrame) {
+    String? event;
+    final dataLines = <String>[];
+    for (final line in rawFrame.split('\n')) {
+      if (line.startsWith('event:')) {
+        event = line.substring(6).trim();
+      } else if (line.startsWith('data:')) {
+        dataLines.add(line.substring(5).trim());
+      }
+      // Any other SSE field (id:, retry:, comments starting with ':') is
+      // ignored — this backend's contract never sends them.
+    }
+    if (event == null) return null;
+    return SseFrame(event: event, data: dataLines.join('\n'));
   }
 
   Failure _mapException(DioException e) {

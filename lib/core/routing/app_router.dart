@@ -2,6 +2,10 @@ import 'package:cerne/core/di/service_locator.dart';
 import 'package:cerne/core/routing/app_routes.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:cerne/features/auth/presentation/pages/login_signup_page.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_sessions_bloc.dart';
+import 'package:cerne/features/chat/presentation/bloc/chat_sessions_event.dart';
 import 'package:cerne/features/home/presentation/pages/home_chat_shell_page.dart';
 import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
 import 'package:cerne/features/records/presentation/bloc/records_event.dart';
@@ -43,7 +47,17 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: AppRoutes.home,
-      builder: (context, state) => const HomeChatShellPage(),
+      builder: (context, state) => MultiBlocProvider(
+        providers: [
+          BlocProvider<ChatBloc>(
+            create: (_) => getIt<ChatBloc>()..add(const ChatStarted()),
+          ),
+          BlocProvider<ChatSessionsBloc>(
+            create: (_) => getIt<ChatSessionsBloc>()..add(const SessionsStarted()),
+          ),
+        ],
+        child: const HomeChatShellPage(),
+      ),
     ),
     GoRoute(
       path: AppRoutes.records,

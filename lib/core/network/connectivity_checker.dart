@@ -15,4 +15,11 @@ class ConnectivityChecker {
     final results = await _connectivity.checkConnectivity();
     return results.any((result) => result != ConnectivityResult.none);
   }
+
+  /// Live connectivity transitions (research.md R8) — layered on top of,
+  /// never replacing, [hasConnection]'s own synchronous pre-check. Maps "any
+  /// result `!= ConnectivityResult.none`" to `true`, the exact predicate
+  /// [hasConnection] already uses.
+  Stream<bool> get onConnectivityChanged => _connectivity.onConnectivityChanged
+      .map((results) => results.any((result) => result != ConnectivityResult.none));
 }

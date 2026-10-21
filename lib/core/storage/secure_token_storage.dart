@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// Wraps `flutter_secure_storage` for the four session fields (data-model.md
@@ -35,6 +37,29 @@ class SecureTokenStorage {
   }
 
   Future<String?> readTokenType() => _storage.read(key: _tokenTypeKey);
+
+  /// Reads the `email` claim straight out of the stored access token's own
+  /// JWT payload — no network call, and no new field to persist, since the
+  /// access token (GoTrue-issued) already carries it. A JWT's payload is
+  /// signed, never encrypted, so decoding it client-side (never verifying
+  /// the signature — that's the backend's job on every request) reveals
+  /// nothing the backend doesn't already hand this device. `null` for
+  /// anything malformed or missing, never throws.
+  Future<String?> readAccountEmail() async {
+    final token = await readAccessToken();
+    if (token == null) return null;
+    final segments = token.split('.');
+    if (segments.length != 3) return null;
+    try {
+      final payloadJson = utf8.decode(base64Url.decode(base64Url.normalize(segments[1])));
+      final payload = jsonDecode(payloadJson) as Map<String, dynamic>;
+      return payload['email'] as String?;
+    } on FormatException {
+      return null;
+    } on TypeError {
+      return null;
+    }
+  }
 
   Future<void> delete() async {
     await _storage.delete(key: _accessTokenKey);

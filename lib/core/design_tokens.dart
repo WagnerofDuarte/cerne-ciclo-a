@@ -129,6 +129,7 @@ class DesignTokens {
   static const double sizePhotoThumbnailWideWidth = 96;
   static const double sizePhotoThumbnailWideHeight = 72;
   static const double sizeStatusIcon = 32;
+  static const double sizeAvatarMenu = 40;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [
