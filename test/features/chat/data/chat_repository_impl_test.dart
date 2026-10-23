@@ -66,9 +66,13 @@ void main() {
     localCache = MockChatLocalCache();
     when(() => localCache.readSessions()).thenAnswer((_) async => const []);
     when(() => localCache.readAllMessages()).thenAnswer((_) async => const {});
+    when(() => localCache.readSavedMessageEntryIds()).thenAnswer((_) async => const {});
     when(() => localCache.writeSessions(any())).thenAnswer((_) async {});
     when(
       () => localCache.writeMessagesForSession(any(), any()),
+    ).thenAnswer((_) async {});
+    when(
+      () => localCache.writeSavedMessageEntryIds(any()),
     ).thenAnswer((_) async {});
     repository = ChatRepositoryImpl(
       remoteDataSource,
@@ -292,4 +296,69 @@ void main() {
       ]);
     },
   );
+
+  group('savedEntryIdFor()/recordMessageSaved()', () {
+    test(
+      "#9 savedEntryIdFor('m1') before any local-cache-loading call has run "
+      '-> null',
+      () {
+        expect(repository.savedEntryIdFor('m1'), isNull);
+      },
+    );
+
+    test(
+      "#10 after listMessages(sessionId) resolves, savedEntryIdFor for a "
+      'previously-recorded id returns that entryId',
+      () async {
+        when(
+          () => localCache.readSavedMessageEntryIds(),
+        ).thenAnswer((_) async => {'m1': 'e1'});
+        when(() => remoteDataSource.listMessages('s1')).thenAnswer(
+          (_) async => Right([_buildMessage()]),
+        );
+
+        await repository.listMessages('s1');
+
+        expect(repository.savedEntryIdFor('m1'), 'e1');
+      },
+    );
+
+    test(
+      '#11 recordMessageSaved calls writeSavedMessageEntryIds with the '
+      'merged map, and a subsequent savedEntryIdFor returns it without a '
+      'new storage read',
+      () async {
+        await repository.recordMessageSaved(chatMessageId: 'm1', entryId: 'e1');
+
+        verify(() => localCache.writeSavedMessageEntryIds({'m1': 'e1'})).called(1);
+        expect(repository.savedEntryIdFor('m1'), 'e1');
+      },
+    );
+
+    test(
+      '#12 recordMessageSaved called twice for the same pair is a harmless '
+      'overwrite — no error, exactly one entry in the map for that id',
+      () async {
+        await repository.recordMessageSaved(chatMessageId: 'm1', entryId: 'e1');
+        await repository.recordMessageSaved(chatMessageId: 'm1', entryId: 'e1');
+
+        expect(repository.savedEntryIdFor('m1'), 'e1');
+        verify(() => localCache.writeSavedMessageEntryIds(any())).called(2);
+      },
+    );
+
+    test(
+      '#13 FR-004/US2: with no local record of a prior success (as if the '
+      'device cache were cleared/reinstalled), savedEntryIdFor returns null; '
+      'after an idempotent-retry save completes, it self-heals to the '
+      'returned entryId regardless of what it previously held',
+      () async {
+        expect(repository.savedEntryIdFor('m1'), isNull);
+
+        await repository.recordMessageSaved(chatMessageId: 'm1', entryId: 'e1');
+
+        expect(repository.savedEntryIdFor('m1'), 'e1');
+      },
+    );
+  });
 }

@@ -1,5 +1,7 @@
 import 'package:cerne/core/design_tokens.dart';
+import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
+import 'package:cerne/features/chat/presentation/widgets/bookmark_button.dart';
 import 'package:flutter/material.dart';
 
 /// One widget, branching on [ChatMessage.role]/[ChatMessage.status]
@@ -11,16 +13,87 @@ import 'package:flutter/material.dart';
 /// bubble, with the same timestamp still below that, tappable only in this
 /// state (FR-004/FR-006).
 class ChatMessageBubble extends StatelessWidget {
-  const ChatMessageBubble({required this.message, this.onRetryTap, super.key});
+  const ChatMessageBubble({
+    required this.message,
+    this.onRetryTap,
+    this.bookmarkStatus,
+    this.onBookmarkTap,
+    super.key,
+  });
 
   final ChatMessage message;
   final VoidCallback? onRetryTap;
+
+  /// Only ever read inside the `_isUser` branch — the assistant branch never
+  /// instantiates [BookmarkButton] (FR-001 holds by construction).
+  final BookmarkStatus? bookmarkStatus;
+  final VoidCallback? onBookmarkTap;
 
   bool get _isUser => message.role == ChatRole.user;
 
   @override
   Widget build(BuildContext context) {
     final isFailed = message.status == ChatMessageStatus.failed;
+
+    // Prototype: `max-width:82%` bounds the whole row (bubble + gap + icon)
+    // for a user message, but only the bubble itself for an assistant one —
+    // so a user bubble's own wrap width is reduced by the space the gap and
+    // icon take out of that shared budget, matching cerne-prototype.html's
+    // markup rather than letting the bubble alone reach the same max a bare
+    // assistant bubble can.
+    final rowMaxWidth = MediaQuery.of(context).size.width * 0.8;
+    final bubbleMaxWidth = _isUser
+        ? rowMaxWidth - DesignTokens.spacingBookmarkGap - DesignTokens.sizeBookmarkIcon
+        : rowMaxWidth;
+
+    final bubble = Container(
+      padding: const EdgeInsets.all(DesignTokens.spacingMd),
+      constraints: BoxConstraints(maxWidth: bubbleMaxWidth),
+      decoration: BoxDecoration(
+        color: _isUser ? DesignTokens.colorChatBubbleUser : DesignTokens.colorSurfaceElevated,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(DesignTokens.radiusMd),
+          topRight: const Radius.circular(DesignTokens.radiusMd),
+          bottomLeft: Radius.circular(_isUser ? DesignTokens.radiusMd : 0),
+          bottomRight: Radius.circular(_isUser ? 0 : DesignTokens.radiusMd),
+        ),
+        boxShadow: _isUser ? null : DesignTokens.elevation1,
+      ),
+      child: Text.rich(
+        TextSpan(
+          text: message.content,
+          children: [
+            if (message.status == ChatMessageStatus.streaming)
+              const WidgetSpan(
+                alignment: PlaceholderAlignment.middle,
+                child: _StreamingCursor(),
+              ),
+          ],
+        ),
+        style: DesignTokens.textBodyMd,
+      ),
+    );
+
+    final bubbleRow = _isUser
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              bubble,
+              const SizedBox(width: DesignTokens.spacingBookmarkGap),
+              // Prototype: the icon carries its own `margin-bottom:4px`, so
+              // it sits slightly above the bubble's bottom edge rather than
+              // flush with it.
+              Padding(
+                padding: const EdgeInsets.only(bottom: DesignTokens.spacingXs),
+                child: BookmarkButton(
+                  status: bookmarkStatus ?? BookmarkStatus.idle,
+                  onTap: onBookmarkTap,
+                ),
+              ),
+            ],
+          )
+        : bubble;
 
     return Align(
       alignment: _isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -32,37 +105,13 @@ class ChatMessageBubble extends StatelessWidget {
             crossAxisAlignment: _isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: DesignTokens.spacingMd),
-                padding: const EdgeInsets.all(DesignTokens.spacingMd),
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * 0.8,
-                ),
-                decoration: BoxDecoration(
-                  color: _isUser
-                      ? DesignTokens.colorChatBubbleUser
-                      : DesignTokens.colorSurfaceElevated,
-                  borderRadius: BorderRadius.only(
-                    topLeft: const Radius.circular(DesignTokens.radiusMd),
-                    topRight: const Radius.circular(DesignTokens.radiusMd),
-                    bottomLeft: Radius.circular(_isUser ? DesignTokens.radiusMd : 0),
-                    bottomRight: Radius.circular(_isUser ? 0 : DesignTokens.radiusMd),
-                  ),
-                  boxShadow: _isUser ? null : DesignTokens.elevation1,
-                ),
-                child: Text.rich(
-                  TextSpan(
-                    text: message.content,
-                    children: [
-                      if (message.status == ChatMessageStatus.streaming)
-                        const WidgetSpan(
-                          alignment: PlaceholderAlignment.middle,
-                          child: _StreamingCursor(),
-                        ),
-                    ],
-                  ),
-                  style: DesignTokens.textBodyMd,
-                ),
+              // Same horizontal inset on both this and the status line below
+              // it, so the row's trailing edge (the button for a user
+              // message) lines up with the time's trailing edge instead of
+              // reaching past it into the margin.
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: DesignTokens.spacingMd),
+                child: bubbleRow,
               ),
               const SizedBox(height: DesignTokens.spacingXs),
               Padding(

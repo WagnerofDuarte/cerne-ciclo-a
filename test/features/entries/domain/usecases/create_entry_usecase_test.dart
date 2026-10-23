@@ -71,4 +71,61 @@ void main() {
 
     expect(result, const Left<Failure, Entry>(failure));
   });
+
+  group('chat extension (P-RF10)', () {
+    test(
+      'chatMessageId + occurredAt both passed through to repository.create',
+      () async {
+        final entry = _buildEntry(source: EntrySource.chat);
+        final occurredAt = DateTime(2026, 1, 1, 9);
+        when(
+          () => repository.create(
+            content: any(named: 'content'),
+            source: any(named: 'source'),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) async => Right(entry));
+
+        await useCase(
+          'hi',
+          EntrySource.chat,
+          chatMessageId: 'msg-1',
+          occurredAt: occurredAt,
+        );
+
+        verify(
+          () => repository.create(
+            content: 'hi',
+            source: EntrySource.chat,
+            chatMessageId: 'msg-1',
+            occurredAt: occurredAt,
+          ),
+        ).called(1);
+      },
+    );
+
+    test('omitting both leaves repository.create called with null for both', () async {
+      final entry = _buildEntry();
+      when(
+        () => repository.create(
+          content: any(named: 'content'),
+          source: any(named: 'source'),
+          chatMessageId: any(named: 'chatMessageId'),
+          occurredAt: any(named: 'occurredAt'),
+        ),
+      ).thenAnswer((_) async => Right(entry));
+
+      await useCase('hello', EntrySource.manual);
+
+      verify(
+        () => repository.create(
+          content: 'hello',
+          source: EntrySource.manual,
+          chatMessageId: null,
+          occurredAt: null,
+        ),
+      ).called(1);
+    });
+  });
 }

@@ -101,6 +101,10 @@ class _HomeChatShellPageState extends State<HomeChatShellPage> {
                                 MessageRetryRequested(userMessageId),
                               );
                             },
+                            bookmarkStatus: chatReady?.bookmarkStatusFor(message.id),
+                            onBookmarkTap: () => context.read<ChatBloc>().add(
+                              BookmarkTapped(message.id),
+                            ),
                           );
                         },
                       ),

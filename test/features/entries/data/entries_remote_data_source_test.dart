@@ -108,6 +108,67 @@ void main() {
     expect(result.getLeft().toNullable(), isA<ValidationFailure>());
   });
 
+  group('chat extension (P-RF10)', () {
+    test('chatMessageId + occurredAt both present and correctly formatted '
+        'in the body', () async {
+      stubCall(Right(validData));
+      final occurredAt = DateTime.utc(2026, 1, 1, 9);
+
+      await dataSource.create(
+        content: 'hi',
+        source: EntrySource.chat,
+        chatMessageId: 'msg-1',
+        occurredAt: occurredAt,
+      );
+
+      verify(
+        () => apiClient.call(
+          'entries-create',
+          method: 'POST',
+          body: {
+            'content': 'hi',
+            'source': 'chat',
+            'chatMessageId': 'msg-1',
+            'occurredAt': occurredAt.toUtc().toIso8601String(),
+          },
+        ),
+      ).called(1);
+    });
+
+    test('chatMessageId only -> no occurredAt key present', () async {
+      stubCall(Right(validData));
+
+      await dataSource.create(
+        content: 'hi',
+        source: EntrySource.chat,
+        chatMessageId: 'msg-1',
+      );
+
+      verify(
+        () => apiClient.call(
+          'entries-create',
+          method: 'POST',
+          body: {'content': 'hi', 'source': 'chat', 'chatMessageId': 'msg-1'},
+        ),
+      ).called(1);
+    });
+
+    test('a 200 response whose chatMessageId matches a value already saved '
+        'once parses to Right(Entry) with no special handling '
+        '(idempotent-retry path)', () async {
+      stubCall(Right({...validData, 'chatMessageId': 'msg-1'}));
+
+      final result = await dataSource.create(
+        content: 'hi',
+        source: EntrySource.chat,
+        chatMessageId: 'msg-1',
+      );
+
+      expect(result.isRight(), isTrue);
+      expect(result.toNullable()!.chatMessageId, 'msg-1');
+    });
+  });
+
   group('list()', () {
     void stubListCall(Either<Failure, Map<String, dynamic>> result) {
       when(

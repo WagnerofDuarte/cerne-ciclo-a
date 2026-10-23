@@ -1,4 +1,5 @@
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:equatable/equatable.dart';
 
@@ -25,6 +26,7 @@ class ChatReady extends ChatState {
     required this.isOffline,
     required this.awaitingResponse,
     this.loadFailure,
+    this.bookmarks = const {},
   });
 
   /// `null` = empty conversation, no session created yet (FR-010).
@@ -42,7 +44,14 @@ class ChatReady extends ChatState {
   /// case).
   final Failure? loadFailure;
 
+  /// Per-message bookmark sub-state, keyed by `ChatMessage.id` — an absent
+  /// key means `BookmarkStatus.idle` (research.md R5).
+  final Map<String, BookmarkStatus> bookmarks;
+
   bool get canSend => !isOffline && !awaitingResponse && loadFailure == null;
+
+  BookmarkStatus bookmarkStatusFor(String messageId) =>
+      bookmarks[messageId] ?? BookmarkStatus.idle;
 
   static const _unset = Object();
 
@@ -53,6 +62,7 @@ class ChatReady extends ChatState {
     bool? isOffline,
     bool? awaitingResponse,
     Object? loadFailure = _unset,
+    Map<String, BookmarkStatus>? bookmarks,
   }) {
     return ChatReady(
       sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
@@ -62,6 +72,7 @@ class ChatReady extends ChatState {
       loadFailure: identical(loadFailure, _unset)
           ? this.loadFailure
           : loadFailure as Failure?,
+      bookmarks: bookmarks ?? this.bookmarks,
     );
   }
 
@@ -72,5 +83,6 @@ class ChatReady extends ChatState {
     isOffline,
     awaitingResponse,
     loadFailure,
+    bookmarks,
   ];
 }

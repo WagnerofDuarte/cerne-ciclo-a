@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:bloc_test/bloc_test.dart';
 import 'package:cerne/core/network/connectivity_checker.dart';
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
@@ -10,6 +11,8 @@ import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
+import 'package:cerne/features/entries/domain/entities/entry.dart';
+import 'package:cerne/features/entries/domain/usecases/create_entry_usecase.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:test/test.dart';
@@ -17,6 +20,8 @@ import 'package:test/test.dart';
 class MockChatRepository extends Mock implements ChatRepository {}
 
 class MockConnectivityChecker extends Mock implements ConnectivityChecker {}
+
+class MockCreateEntryUseCase extends Mock implements CreateEntryUseCase {}
 
 ChatMessage _buildMessage({
   required String id,
@@ -46,19 +51,48 @@ ChatSession _buildSession({String id = 's1'}) => ChatSession(
   updatedAt: DateTime(2026, 1, 1),
 );
 
+Entry _buildEntry({String id = 'entry-1'}) => Entry(
+  id: id,
+  content: 'hi',
+  source: EntrySource.chat,
+  chatMessageId: 'm1',
+  occurredAt: DateTime(2026, 1, 1),
+  tags: const [],
+  piiStatus: PiiStatus.pending,
+  piiSpans: const [],
+  embeddingStatus: EmbeddingStatus.pending,
+  mediaDurationSeconds: null,
+  serverRevision: 1,
+  createdAt: DateTime(2026, 1, 1),
+  updatedAt: DateTime(2026, 1, 1),
+);
+
 void main() {
   late MockChatRepository chatRepository;
   late MockConnectivityChecker connectivityChecker;
+  late MockCreateEntryUseCase createEntryUseCase;
   late StreamController<bool> connectivityController;
+
+  setUpAll(() {
+    registerFallbackValue(EntrySource.chat);
+  });
 
   setUp(() {
     chatRepository = MockChatRepository();
     connectivityChecker = MockConnectivityChecker();
+    createEntryUseCase = MockCreateEntryUseCase();
     connectivityController = StreamController<bool>.broadcast();
     when(() => connectivityChecker.onConnectivityChanged)
         .thenAnswer((_) => connectivityController.stream);
     when(() => connectivityChecker.hasConnection()).thenAnswer((_) async => true);
     when(() => chatRepository.setLastActiveSessionId(any())).thenAnswer((_) async {});
+    when(() => chatRepository.savedEntryIdFor(any())).thenReturn(null);
+    when(
+      () => chatRepository.recordMessageSaved(
+        chatMessageId: any(named: 'chatMessageId'),
+        entryId: any(named: 'entryId'),
+      ),
+    ).thenAnswer((_) async {});
   });
 
   tearDown(() => connectivityController.close());
@@ -66,6 +100,7 @@ void main() {
   ChatBloc buildBloc() => ChatBloc(
     chatRepository: chatRepository,
     connectivityChecker: connectivityChecker,
+    createEntryUseCase: createEntryUseCase,
   );
 
   group('ChatStarted', () {
@@ -679,6 +714,412 @@ void main() {
         expect(state, isA<ChatReady>());
         expect((state as ChatReady).sessionId, 's2');
         expect(state.messages.map((m) => m.id), ['m2']);
+      },
+    );
+  });
+
+  group('_seedBookmarks (via ChatStarted/_loadSession)', () {
+    blocTest<ChatBloc, ChatState>(
+      '#1 a mix of messages, one saved user message, seeds bookmarks to '
+      'exactly {that id: saved} — other messages report idle',
+      setUp: () {
+        when(() => chatRepository.lastActiveSessionId).thenAnswer((_) async => 's1');
+        when(() => chatRepository.listMessages('s1')).thenAnswer(
+          (_) async => Right([
+            _buildMessage(id: 'm1', role: ChatRole.assistant),
+            _buildMessage(id: 'm2', role: ChatRole.user),
+            _buildMessage(id: 'm3', role: ChatRole.user),
+          ]),
+        );
+        when(() => chatRepository.savedEntryIdFor('m2')).thenReturn('entry-1');
+      },
+      build: buildBloc,
+      act: (bloc) => bloc.add(const ChatStarted()),
+      expect: () => [
+        isA<ChatReady>()
+            .having((s) => s.bookmarks, 'bookmarks', {'m2': BookmarkStatus.saved})
+            .having((s) => s.bookmarkStatusFor('m1'), 'm1 status', BookmarkStatus.idle)
+            .having((s) => s.bookmarkStatusFor('m3'), 'm3 status', BookmarkStatus.idle),
+      ],
+    );
+  });
+
+  group('BookmarkTapped', () {
+    blocTest<ChatBloc, ChatState>(
+      '#2 idle user message: saving -> saved, createEntryUseCase called once '
+      'with chatMessageId/occurredAt, recordMessageSaved called once',
+      setUp: () {
+        final entry = _buildEntry();
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) async => Right(entry));
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user, content: 'hi')],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) => bloc.add(const BookmarkTapped('m1')),
+      expect: () => [
+        isA<ChatReady>().having(
+          (s) => s.bookmarkStatusFor('m1'),
+          'status after tap',
+          BookmarkStatus.saving,
+        ),
+        isA<ChatReady>().having(
+          (s) => s.bookmarkStatusFor('m1'),
+          'status after success',
+          BookmarkStatus.saved,
+        ),
+      ],
+      verify: (_) {
+        verify(
+          () => createEntryUseCase(
+            'hi',
+            EntrySource.chat,
+            chatMessageId: 'm1',
+            occurredAt: DateTime(2026, 1, 1),
+          ),
+        ).called(1);
+        verify(
+          () => chatRepository.recordMessageSaved(chatMessageId: 'm1', entryId: 'entry-1'),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#3 NetworkOfflineFailure -> saving -> error; recordMessageSaved never '
+      'called',
+      setUp: () {
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer(
+          (_) async =>
+              const Left(NetworkOfflineFailure(message: 'offline', requestId: '')),
+        );
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) => bloc.add(const BookmarkTapped('m1')),
+      expect: () => [
+        isA<ChatReady>().having(
+          (s) => s.bookmarkStatusFor('m1'),
+          'saving',
+          BookmarkStatus.saving,
+        ),
+        isA<ChatReady>().having((s) => s.bookmarkStatusFor('m1'), 'error', BookmarkStatus.error),
+      ],
+      verify: (_) {
+        verifyNever(
+          () => chatRepository.recordMessageSaved(
+            chatMessageId: any(named: 'chatMessageId'),
+            entryId: any(named: 'entryId'),
+          ),
+        );
+      },
+    );
+
+    test(
+      '#4 AuthExpiredFailure -> error; reauthRequired emits exactly one event',
+      () async {
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer(
+          (_) async =>
+              const Left(AuthExpiredFailure(message: 'expired', requestId: '')),
+        );
+        final bloc = buildBloc();
+        var reauthCount = 0;
+        final subscription = bloc.reauthRequired.listen((_) => reauthCount++);
+        bloc.emit(
+          ChatReady(
+            sessionId: 's1',
+            messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+            isOffline: false,
+            awaitingResponse: false,
+          ),
+        );
+
+        bloc.add(const BookmarkTapped('m1'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+
+        expect(reauthCount, 1);
+        expect((bloc.state as ChatReady).bookmarkStatusFor('m1'), BookmarkStatus.error);
+        await subscription.cancel();
+        await bloc.close();
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#5 two dispatches back-to-back before the first resolves -> '
+      'createEntryUseCase called exactly once',
+      setUp: () {
+        final completer = Completer<Either<Failure, Entry>>();
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) => completer.future);
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) {
+        bloc.add(const BookmarkTapped('m1'));
+        bloc.add(const BookmarkTapped('m1'));
+      },
+      wait: const Duration(milliseconds: 10),
+      verify: (_) {
+        verify(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#6 already-saved bookmark -> no-op, createEntryUseCase never called',
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+        bookmarks: const {'m1': BookmarkStatus.saved},
+      ),
+      act: (bloc) => bloc.add(const BookmarkTapped('m1')),
+      expect: () => <ChatState>[],
+      verify: (_) {
+        verifyNever(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        );
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#7 tapping an optimistic (local-...) user message -> no-op, '
+      'createEntryUseCase never called (research.md R6)',
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [
+          ChatMessage(
+            id: 'local-1',
+            sessionId: 's1',
+            role: ChatRole.user,
+            content: 'oi',
+            seq: 0,
+            status: ChatMessageStatus.complete,
+            retryCount: 0,
+            createdAt: DateTime(2026, 1, 1),
+          ),
+        ],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) => bloc.add(const BookmarkTapped('local-1')),
+      expect: () => <ChatState>[],
+      verify: (_) {
+        verifyNever(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        );
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#8 tapping an assistant message id (defensive, UI never dispatches '
+      'this) -> no-op',
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'a1', role: ChatRole.assistant)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) => bloc.add(const BookmarkTapped('a1')),
+      expect: () => <ChatState>[],
+      verify: (_) {
+        verifyNever(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        );
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#9 a save in flight, superseded by ConversationSelected before it '
+      "resolves -> the new session's own ChatReady is unaffected; "
+      'recordMessageSaved is still called once',
+      setUp: () {
+        final entry = _buildEntry();
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer(
+          (_) => Future.delayed(const Duration(milliseconds: 20), () => Right(entry)),
+        );
+        when(() => chatRepository.listMessages('other-session')).thenAnswer(
+          (_) async => Right([_buildMessage(id: 'm2', sessionId: 'other-session')]),
+        );
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const BookmarkTapped('m1'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const ConversationSelected('other-session'));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      },
+      verify: (bloc) {
+        final state = bloc.state;
+        expect(state, isA<ChatReady>());
+        expect((state as ChatReady).sessionId, 'other-session');
+        expect(state.messages.map((m) => m.id), ['m2']);
+        verify(
+          () => chatRepository.recordMessageSaved(chatMessageId: 'm1', entryId: 'entry-1'),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#10 a full round trip, immediately followed by re-selecting the same '
+      'session (navigate-away-and-back) -> the reloaded bookmarks reflect '
+      "recordMessageSaved's persisted write",
+      setUp: () {
+        final entry = _buildEntry();
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) async => Right(entry));
+        when(() => chatRepository.listMessages('s1')).thenAnswer(
+          (_) async => Right([_buildMessage(id: 'm1', role: ChatRole.user)]),
+        );
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const BookmarkTapped('m1'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        when(() => chatRepository.savedEntryIdFor('m1')).thenReturn('entry-1');
+        bloc.add(const ConversationSelected('s1'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      },
+      verify: (bloc) {
+        final state = bloc.state;
+        expect(state, isA<ChatReady>());
+        expect((state as ChatReady).bookmarkStatusFor('m1'), BookmarkStatus.saved);
+      },
+    );
+  });
+
+  group('BookmarkTapped never affects the rest of the screen (FR-006)', () {
+    blocTest<ChatBloc, ChatState>(
+      '#11 a bookmark save in flight never touches awaitingResponse/messages '
+      '— a concurrent MessageSubmitted proceeds exactly as it would with no '
+      'bookmark activity at all',
+      setUp: () {
+        final completer = Completer<Either<Failure, Entry>>();
+        when(
+          () => createEntryUseCase(
+            any(),
+            any(),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) => completer.future);
+        when(() => chatRepository.createSession(title: any(named: 'title')))
+            .thenAnswer((_) async => Right(_buildSession()));
+        when(
+          () => chatRepository.sendMessage(
+            sessionId: any(named: 'sessionId'),
+            content: any(named: 'content'),
+          ),
+        ).thenAnswer((_) => const Stream.empty());
+      },
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: null,
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const BookmarkTapped('m1'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        bloc.add(const MessageSubmitted('olá'));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      },
+      verify: (bloc) {
+        final state = bloc.state;
+        expect(state, isA<ChatReady>());
+        expect((state as ChatReady).awaitingResponse, isTrue);
+        expect(state.messages, hasLength(3));
+        expect(state.bookmarkStatusFor('m1'), BookmarkStatus.saving);
       },
     );
   });

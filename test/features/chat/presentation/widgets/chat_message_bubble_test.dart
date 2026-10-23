@@ -1,5 +1,7 @@
 import 'package:cerne/core/design_tokens.dart';
+import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
+import 'package:cerne/features/chat/presentation/widgets/bookmark_button.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,11 +26,18 @@ Future<void> pumpBubble(
   WidgetTester tester,
   ChatMessage message, {
   VoidCallback? onRetryTap,
+  BookmarkStatus? bookmarkStatus,
+  VoidCallback? onBookmarkTap,
 }) {
   return tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: ChatMessageBubble(message: message, onRetryTap: onRetryTap),
+        body: ChatMessageBubble(
+          message: message,
+          onRetryTap: onRetryTap,
+          bookmarkStatus: bookmarkStatus,
+          onBookmarkTap: onBookmarkTap,
+        ),
       ),
     ),
   );
@@ -147,5 +156,77 @@ void main() {
     await tester.pump();
 
     expect(tapCount, 0);
+  });
+
+  group('bookmark (US1/US4)', () {
+    testWidgets(
+      'a user-message bubble built with bookmarkStatus renders a '
+      'BookmarkButton reflecting that status, laid out in a Row beside the '
+      'bubble',
+      (tester) async {
+        await pumpBubble(
+          tester,
+          _buildMessage(status: ChatMessageStatus.complete, role: ChatRole.user),
+          bookmarkStatus: BookmarkStatus.idle,
+        );
+
+        expect(find.byType(BookmarkButton), findsOneWidget);
+        expect(find.byType(Row), findsOneWidget);
+        final button = tester.widget<BookmarkButton>(find.byType(BookmarkButton));
+        expect(button.status, BookmarkStatus.idle);
+      },
+    );
+
+    testWidgets('bookmarkStatus: saved renders a BookmarkButton(status: saved)', (
+      tester,
+    ) async {
+      await pumpBubble(
+        tester,
+        _buildMessage(status: ChatMessageStatus.complete, role: ChatRole.user),
+        bookmarkStatus: BookmarkStatus.saved,
+      );
+
+      final button = tester.widget<BookmarkButton>(find.byType(BookmarkButton));
+      expect(button.status, BookmarkStatus.saved);
+    });
+
+    testWidgets(
+      'tapping the bookmark invokes onBookmarkTap, independently of '
+      'onRetryTap',
+      (tester) async {
+        var bookmarkTaps = 0;
+        var retryTaps = 0;
+        await pumpBubble(
+          tester,
+          _buildMessage(status: ChatMessageStatus.complete, role: ChatRole.user),
+          bookmarkStatus: BookmarkStatus.idle,
+          onBookmarkTap: () => bookmarkTaps++,
+          onRetryTap: () => retryTaps++,
+        );
+
+        await tester.tap(find.byType(BookmarkButton));
+        await tester.pump();
+
+        expect(bookmarkTaps, 1);
+        expect(retryTaps, 0);
+      },
+    );
+
+    testWidgets(
+      'the assistant branch never builds a BookmarkButton, for every '
+      'ChatMessageStatus and regardless of bookmarkStatus/onBookmarkTap',
+      (tester) async {
+        for (final status in ChatMessageStatus.values) {
+          await pumpBubble(
+            tester,
+            _buildMessage(status: status, role: ChatRole.assistant),
+            bookmarkStatus: BookmarkStatus.saved,
+            onBookmarkTap: () {},
+          );
+
+          expect(find.byType(BookmarkButton), findsNothing);
+        }
+      },
+    );
   });
 }

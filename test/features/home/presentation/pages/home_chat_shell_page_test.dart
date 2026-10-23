@@ -7,6 +7,7 @@ import 'package:cerne/features/chat/presentation/bloc/chat_sessions_bloc.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_sessions_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_sessions_state.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
+import 'package:cerne/features/chat/presentation/widgets/bookmark_button.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_offline_banner.dart';
 import 'package:cerne/features/home/presentation/pages/home_chat_shell_page.dart';
 import 'package:cerne/features/session/domain/entities/session_status.dart';
@@ -219,6 +220,64 @@ void main() {
         await tester.pump();
 
         verify(() => chatBloc.add(const MessageRetryRequested('u1'))).called(1);
+      },
+    );
+  });
+
+  group('bookmark wiring (US4/SC-004)', () {
+    testWidgets(
+      'a mixed message list (including a streaming and a failed assistant '
+      'message) renders exactly one BookmarkButton per user message and '
+      'zero on any assistant message',
+      (tester) async {
+        await pumpHomeChatShellPage(
+          tester,
+          ChatReady(
+            sessionId: 's1',
+            messages: [
+              _buildMessage(id: 'u1', role: ChatRole.user, status: ChatMessageStatus.complete),
+              _buildMessage(
+                id: 'a1',
+                role: ChatRole.assistant,
+                status: ChatMessageStatus.streaming,
+                seq: 1,
+              ),
+              _buildMessage(id: 'u2', role: ChatRole.user, status: ChatMessageStatus.complete, seq: 2),
+              _buildMessage(
+                id: 'a2',
+                role: ChatRole.assistant,
+                status: ChatMessageStatus.failed,
+                seq: 3,
+              ),
+            ],
+            isOffline: false,
+            awaitingResponse: false,
+          ),
+        );
+
+        expect(find.byType(BookmarkButton), findsNWidgets(2));
+      },
+    );
+
+    testWidgets(
+      "tapping a user message's bookmark dispatches BookmarkTapped(message.id)",
+      (tester) async {
+        await pumpHomeChatShellPage(
+          tester,
+          ChatReady(
+            sessionId: 's1',
+            messages: [
+              _buildMessage(id: 'u1', role: ChatRole.user, status: ChatMessageStatus.complete),
+            ],
+            isOffline: false,
+            awaitingResponse: false,
+          ),
+        );
+
+        await tester.tap(find.byType(BookmarkButton));
+        await tester.pump();
+
+        verify(() => chatBloc.add(const BookmarkTapped('u1'))).called(1);
       },
     );
   });

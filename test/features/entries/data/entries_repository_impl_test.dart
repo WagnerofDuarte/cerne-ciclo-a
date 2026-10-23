@@ -158,6 +158,63 @@ void main() {
     expect(repository.cachedEntries, isEmpty);
   });
 
+  group('chat extension (P-RF10)', () {
+    test('threads chatMessageId/occurredAt straight through to '
+        'remoteDataSource.create', () async {
+      final entry = _buildEntry();
+      final occurredAt = DateTime(2026, 1, 1, 9);
+      when(
+        () => remoteDataSource.create(
+          content: any(named: 'content'),
+          source: any(named: 'source'),
+          chatMessageId: any(named: 'chatMessageId'),
+          occurredAt: any(named: 'occurredAt'),
+        ),
+      ).thenAnswer((_) async => Right(entry));
+
+      await repository.create(
+        content: 'hi',
+        source: EntrySource.chat,
+        chatMessageId: 'msg-1',
+        occurredAt: occurredAt,
+      );
+
+      verify(
+        () => remoteDataSource.create(
+          content: 'hi',
+          source: EntrySource.chat,
+          chatMessageId: 'msg-1',
+          occurredAt: occurredAt,
+        ),
+      ).called(1);
+    });
+
+    test(
+      'AuthExpiredFailure passes through as Left with no retry attempted '
+      'inside create() itself (research.md R9)',
+      () async {
+        const failure = AuthExpiredFailure(message: 'expired', requestId: 'r1');
+        when(
+          () => remoteDataSource.create(
+            content: any(named: 'content'),
+            source: any(named: 'source'),
+            chatMessageId: any(named: 'chatMessageId'),
+            occurredAt: any(named: 'occurredAt'),
+          ),
+        ).thenAnswer((_) async => const Left(failure));
+
+        final result = await repository.create(
+          content: 'hi',
+          source: EntrySource.chat,
+          chatMessageId: 'msg-1',
+        );
+
+        expect(result, const Left<Failure, Entry>(failure));
+        verifyNever(() => sessionRepository.refresh());
+      },
+    );
+  });
+
   group('list()', () {
     final page = EntriesPage(entries: [_buildEntry()], nextCursor: 'cursor-2');
 

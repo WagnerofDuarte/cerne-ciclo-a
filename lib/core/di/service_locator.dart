@@ -218,6 +218,7 @@ void setupServiceLocator() {
     () => ChatBloc(
       chatRepository: getIt<ChatRepository>(),
       connectivityChecker: getIt<ConnectivityChecker>(),
+      createEntryUseCase: getIt<CreateEntryUseCase>(),
     ),
   );
   getIt.registerFactory<ChatSessionsBloc>(

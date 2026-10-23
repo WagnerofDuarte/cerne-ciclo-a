@@ -6,7 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// On-device, cross-restart persistence for chat (research.md R4) —
 /// Keychain-backed, same pattern `EntriesLocalCache` already establishes.
-/// Three **independent** storage keys so one write never clobbers another.
+/// Four **independent** storage keys so one write never clobbers another.
 class ChatLocalCache {
   ChatLocalCache({FlutterSecureStorage? storage})
     : _storage = storage ?? const FlutterSecureStorage();
@@ -16,6 +16,7 @@ class ChatLocalCache {
   static const _sessionsKey = 'chatSessionsLocalCache';
   static const _messagesKey = 'chatMessagesLocalCache';
   static const _lastActiveKey = 'chatLastActiveSessionId';
+  static const _savedMessageEntryIdsKey = 'chatSavedMessageEntryIds';
 
   Future<List<ChatSession>> readSessions() async {
     final raw = await _storage.read(key: _sessionsKey);
@@ -80,6 +81,23 @@ class ChatLocalCache {
       return _storage.delete(key: _lastActiveKey);
     }
     return _storage.write(key: _lastActiveKey, value: sessionId);
+  }
+
+  Future<Map<String, String>> readSavedMessageEntryIds() async {
+    final raw = await _storage.read(key: _savedMessageEntryIdsKey);
+    if (raw == null) return const {};
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      return decoded.map((k, v) => MapEntry(k, v as String));
+    } on FormatException {
+      return const {};
+    } on TypeError {
+      return const {};
+    }
+  }
+
+  Future<void> writeSavedMessageEntryIds(Map<String, String> ids) {
+    return _storage.write(key: _savedMessageEntryIdsKey, value: jsonEncode(ids));
   }
 
   Map<String, dynamic> _sessionToJson(ChatSession s) => {

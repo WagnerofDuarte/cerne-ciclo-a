@@ -50,6 +50,16 @@ class MessageRetryRequested extends ChatEvent {
   List<Object?> get props => [userMessageId];
 }
 
+/// Tapping a user message's bookmark control.
+class BookmarkTapped extends ChatEvent {
+  const BookmarkTapped(this.messageId);
+
+  final String messageId;
+
+  @override
+  List<Object?> get props => [messageId];
+}
+
 /// Internal — fired by the `ConnectivityChecker.onConnectivityChanged`
 /// subscription `ChatBloc` opens in its constructor (research.md R8).
 class ChatConnectivityChanged extends ChatEvent {

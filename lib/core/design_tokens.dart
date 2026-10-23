@@ -130,6 +130,8 @@ class DesignTokens {
   static const double sizePhotoThumbnailWideHeight = 72;
   static const double sizeStatusIcon = 32;
   static const double sizeAvatarMenu = 40;
+  static const double sizeBookmarkIcon = 16;
+  static const double spacingBookmarkGap = 6;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [

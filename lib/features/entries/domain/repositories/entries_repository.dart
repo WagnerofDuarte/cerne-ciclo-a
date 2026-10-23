@@ -11,6 +11,8 @@ abstract class EntriesRepository {
   Future<Either<Failure, Entry>> create({
     required String content,
     required EntrySource source,
+    String? chatMessageId,
+    DateTime? occurredAt,
   });
 
   /// FR-011's "local entries store/cache" — every entry this app has ever

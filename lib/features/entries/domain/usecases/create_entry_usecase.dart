@@ -12,6 +12,15 @@ class CreateEntryUseCase {
 
   final EntriesRepository _repository;
 
-  Future<Either<Failure, Entry>> call(String content, EntrySource source) =>
-      _repository.create(content: content, source: source);
+  Future<Either<Failure, Entry>> call(
+    String content,
+    EntrySource source, {
+    String? chatMessageId,
+    DateTime? occurredAt,
+  }) => _repository.create(
+    content: content,
+    source: source,
+    chatMessageId: chatMessageId,
+    occurredAt: occurredAt,
+  );
 }

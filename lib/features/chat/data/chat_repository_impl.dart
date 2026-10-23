@@ -28,12 +28,14 @@ class ChatRepositoryImpl implements ChatRepository {
 
   List<ChatSession> _cachedSessions = [];
   final Map<String, List<ChatMessage>> _cachedMessages = {};
+  Map<String, String> _savedMessageEntryIds = {};
   Future<void>? _localCacheLoad;
 
   Future<void> _ensureLocalCacheLoaded() {
     return _localCacheLoad ??= () async {
       _cachedSessions = await _localCache.readSessions();
       _cachedMessages.addAll(await _localCache.readAllMessages());
+      _savedMessageEntryIds = await _localCache.readSavedMessageEntryIds();
     }();
   }
 
@@ -118,6 +120,19 @@ class ChatRepositoryImpl implements ChatRepository {
       userMessageId: userMessageId,
     ),
   );
+
+  @override
+  String? savedEntryIdFor(String chatMessageId) =>
+      _savedMessageEntryIds[chatMessageId];
+
+  @override
+  Future<void> recordMessageSaved({
+    required String chatMessageId,
+    required String entryId,
+  }) async {
+    _savedMessageEntryIds = {..._savedMessageEntryIds, chatMessageId: entryId};
+    await _localCache.writeSavedMessageEntryIds(_savedMessageEntryIds);
+  }
 
   /// research.md R3 — retries the whole call once, only if the *first* item
   /// is `AuthExpiredFailure` (i.e. before any `ChatStreamEvent` was ever

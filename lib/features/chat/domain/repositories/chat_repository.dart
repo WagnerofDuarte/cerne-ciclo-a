@@ -58,4 +58,18 @@ abstract class ChatRepository {
     required String sessionId,
     required String userMessageId,
   });
+
+  /// FR-008's device-local, best-effort "already saved" record, keyed by
+  /// `ChatMessage.id`. Not the source of correctness (research.md R1) — the
+  /// backend's own `entries-create` idempotency is. Safe to read only after
+  /// this session's local-cache load has resolved, the same guarantee every
+  /// other `ChatRepositoryImpl` method already awaits internally.
+  String? savedEntryIdFor(String chatMessageId);
+
+  /// Persists [entryId] against [chatMessageId] in the record above — called
+  /// once per successful chat-sourced entry creation.
+  Future<void> recordMessageSaved({
+    required String chatMessageId,
+    required String entryId,
+  });
 }

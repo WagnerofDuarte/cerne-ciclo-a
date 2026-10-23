@@ -58,11 +58,15 @@ class EntriesRepositoryImpl implements EntriesRepository {
   Future<Either<Failure, Entry>> create({
     required String content,
     required EntrySource source,
+    String? chatMessageId,
+    DateTime? occurredAt,
   }) async {
     await _ensureLocalCacheLoaded();
     final result = await _remoteDataSource.create(
       content: content,
       source: source,
+      chatMessageId: chatMessageId,
+      occurredAt: occurredAt,
     );
     return result.match(
       (failure) => Future.value(Left(failure)),

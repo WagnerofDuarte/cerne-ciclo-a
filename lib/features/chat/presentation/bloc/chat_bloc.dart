@@ -2,12 +2,15 @@ import 'dart:async';
 
 import 'package:cerne/core/network/connectivity_checker.dart';
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
 import 'package:cerne/features/chat/domain/entities/chat_title_deriver.dart';
 import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
+import 'package:cerne/features/entries/domain/entities/entry.dart';
+import 'package:cerne/features/entries/domain/usecases/create_entry_usecase.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:fpdart/fpdart.dart';
 
@@ -19,14 +22,17 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   ChatBloc({
     required ChatRepository chatRepository,
     required ConnectivityChecker connectivityChecker,
+    required CreateEntryUseCase createEntryUseCase,
   }) : _chatRepository = chatRepository, // ignore: prefer_initializing_formals
        _connectivityChecker = connectivityChecker, // ignore: prefer_initializing_formals
+       _createEntryUseCase = createEntryUseCase, // ignore: prefer_initializing_formals
        super(const ChatLoading()) {
     on<ChatStarted>(_onStarted);
     on<ConversationSelected>(_onConversationSelected);
     on<NewConversationRequested>(_onNewConversationRequested);
     on<MessageSubmitted>(_onMessageSubmitted);
     on<MessageRetryRequested>(_onMessageRetryRequested);
+    on<BookmarkTapped>(_onBookmarkTapped);
     on<ChatConnectivityChanged>(_onConnectivityChanged);
     _connectivitySubscription = connectivityChecker.onConnectivityChanged.listen(
       (isOnline) => add(ChatConnectivityChanged(isOnline)),
@@ -35,6 +41,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
 
   final ChatRepository _chatRepository;
   final ConnectivityChecker _connectivityChecker;
+  final CreateEntryUseCase _createEntryUseCase;
   late final StreamSubscription<bool> _connectivitySubscription;
   final _reauthController = StreamController<void>.broadcast();
 
@@ -92,6 +99,69 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     );
   }
 
+  /// One independent request/response per message — never involves
+  /// `_turnGeneration`, never touches `awaitingResponse`/`messages`, so a
+  /// save can never block the rest of the screen (FR-006).
+  Future<void> _onBookmarkTapped(
+    BookmarkTapped event,
+    Emitter<ChatState> emit,
+  ) async {
+    final current = state;
+    if (current is! ChatReady) return;
+
+    final index = current.messages.indexWhere((m) => m.id == event.messageId);
+    if (index == -1) return;
+    final message = current.messages[index];
+
+    if (message.role != ChatRole.user) return; // FR-001, defensive
+    if (message.isOptimistic) return; // research.md R6
+
+    final currentStatus = current.bookmarkStatusFor(message.id);
+    if (currentStatus == BookmarkStatus.saving || currentStatus == BookmarkStatus.saved) {
+      return; // FR-003/FR-007
+    }
+
+    emit(
+      current.copyWith(
+        bookmarks: {...current.bookmarks, message.id: BookmarkStatus.saving},
+      ),
+    );
+
+    final created = await _createEntryUseCase(
+      message.content,
+      EntrySource.chat,
+      chatMessageId: message.id,
+      occurredAt: message.createdAt,
+    );
+
+    final latest = state;
+    if (latest is! ChatReady) return; // navigated away mid-save
+
+    await created.match(
+      (failure) async {
+        if (failure is AuthExpiredFailure) _reauthController.add(null); // research.md R9
+        emit(
+          latest.copyWith(
+            bookmarks: {...latest.bookmarks, message.id: BookmarkStatus.error},
+          ),
+        );
+      },
+      (entry) async {
+        await _chatRepository.recordMessageSaved(
+          chatMessageId: message.id,
+          entryId: entry.id,
+        );
+        final afterRecord = state;
+        if (afterRecord is! ChatReady) return;
+        emit(
+          afterRecord.copyWith(
+            bookmarks: {...afterRecord.bookmarks, message.id: BookmarkStatus.saved},
+          ),
+        );
+      },
+    );
+  }
+
   void _onConnectivityChanged(
     ChatConnectivityChanged event,
     Emitter<ChatState> emit,
@@ -131,6 +201,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
               messages: cached,
               isOffline: isOffline,
               awaitingResponse: false,
+              bookmarks: _seedBookmarks(cached),
             ),
           );
         }
@@ -143,10 +214,26 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
             messages: messages,
             isOffline: isOffline,
             awaitingResponse: false,
+            bookmarks: _seedBookmarks(messages),
           ),
         );
       },
     );
+  }
+
+  /// FR-008 — rebuilt from scratch on every `_loadSession` call (never
+  /// incrementally patched): for every user message already recorded as
+  /// saved (research.md R1), seed that id as `saved`; every other message is
+  /// left absent, i.e. `idle`.
+  Map<String, BookmarkStatus> _seedBookmarks(List<ChatMessage> messages) {
+    final result = <String, BookmarkStatus>{};
+    for (final m in messages) {
+      if (m.role != ChatRole.user) continue;
+      if (_chatRepository.savedEntryIdFor(m.id) != null) {
+        result[m.id] = BookmarkStatus.saved;
+      }
+    }
+    return result;
   }
 
   Future<void> _onMessageSubmitted(

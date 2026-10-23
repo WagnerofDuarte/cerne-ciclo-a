@@ -12,7 +12,7 @@ const _malformedEntriesFailure = ValidationFailure(
 /// The only class that calls `ApiClient.call('entries-create'/'entries-list'/
 /// 'entries-get', ...)` and parses the [Entry]/[EntriesPage] response shapes
 /// (data-model.md, contracts/entries-repository-extension.md). Never sends
-/// `occurredAt`/`mediaDurationSeconds`/`chatMessageId` in a request body.
+/// `mediaDurationSeconds` in a request body.
 class EntriesRemoteDataSource {
   const EntriesRemoteDataSource(this._apiClient);
 
@@ -21,11 +21,18 @@ class EntriesRemoteDataSource {
   Future<Either<Failure, Entry>> create({
     required String content,
     required EntrySource source,
+    String? chatMessageId,
+    DateTime? occurredAt,
   }) async {
     final result = await _apiClient.call(
       'entries-create',
       method: 'POST',
-      body: {'content': content, 'source': source.name},
+      body: {
+        'content': content,
+        'source': source.name,
+        'chatMessageId': ?chatMessageId,
+        'occurredAt': ?occurredAt?.toUtc().toIso8601String(),
+      },
     );
 
     return result.flatMap(_parseEntry);
