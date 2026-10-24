@@ -6,6 +6,8 @@ import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
 import 'package:cerne/features/chat/domain/entities/chat_title_deriver.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
+import 'package:cerne/features/chat/domain/entities/proactive_insight.dart';
 import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
@@ -23,9 +25,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     required ChatRepository chatRepository,
     required ConnectivityChecker connectivityChecker,
     required CreateEntryUseCase createEntryUseCase,
+    Duration insightInactivityTimeout = const Duration(minutes: 2),
   }) : _chatRepository = chatRepository, // ignore: prefer_initializing_formals
        _connectivityChecker = connectivityChecker, // ignore: prefer_initializing_formals
        _createEntryUseCase = createEntryUseCase, // ignore: prefer_initializing_formals
+       _insightInactivityTimeout = insightInactivityTimeout, // ignore: prefer_initializing_formals
        super(const ChatLoading()) {
     on<ChatStarted>(_onStarted);
     on<ConversationSelected>(_onConversationSelected);
@@ -34,6 +38,9 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     on<MessageRetryRequested>(_onMessageRetryRequested);
     on<BookmarkTapped>(_onBookmarkTapped);
     on<ChatConnectivityChanged>(_onConnectivityChanged);
+    on<ChatForegroundChanged>(_onForegroundChanged);
+    on<InsightInactivityTimerFired>(_onInsightInactivityTimerFired);
+    on<InsightDismissed>(_onInsightDismissed);
     _connectivitySubscription = connectivityChecker.onConnectivityChanged.listen(
       (isOnline) => add(ChatConnectivityChanged(isOnline)),
     );
@@ -42,6 +49,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   final ChatRepository _chatRepository;
   final ConnectivityChecker _connectivityChecker;
   final CreateEntryUseCase _createEntryUseCase;
+  final Duration _insightInactivityTimeout;
   late final StreamSubscription<bool> _connectivitySubscription;
   final _reauthController = StreamController<void>.broadcast();
 
@@ -50,12 +58,32 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
   /// switch/new-conversation request.
   int _turnGeneration = 0;
 
+  // Insight mechanism bookkeeping — private, never part of ChatState
+  // (research.md R1). None of these six fields are read/written outside this
+  // bloc's own handlers.
+  int _insightMessageCount = 0;
+  bool _insightInFlight = false;
+  InsightTrigger? _pendingInsightTrigger;
+  int _insightGeneration = 0;
+  bool _isForegrounded = true;
+  Timer? _inactivityTimer;
+
+  /// FR-004's single suspension condition — folds "deferred", "in flight",
+  /// and "a card is awaiting dismissal" into one boolean (research.md R5).
+  bool get _insightSuspended {
+    final current = state;
+    return _insightInFlight ||
+        _pendingInsightTrigger != null ||
+        (current is ChatReady && current.insight != null);
+  }
+
   /// A one-shot side effect, not a state (research.md R3/R7) —
   /// `HomeChatShellPage` listens to this to raise the "Sessão expirada"
   /// overlay.
   Stream<void> get reauthRequired => _reauthController.stream;
 
   Future<void> _onStarted(ChatStarted event, Emitter<ChatState> emit) async {
+    _resetInsightMechanism();
     final isOnline = await _connectivityChecker.hasConnection();
     final lastId = await _chatRepository.lastActiveSessionId;
     if (lastId == null) {
@@ -67,9 +95,11 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
           awaitingResponse: false,
         ),
       );
+      _armInactivityTimer();
       return;
     }
     await _loadSession(lastId, emit, isOffline: !isOnline);
+    _armInactivityTimer();
   }
 
   Future<void> _onConversationSelected(
@@ -77,8 +107,10 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     _turnGeneration++;
+    _resetInsightMechanism();
     final isOnline = await _connectivityChecker.hasConnection();
     await _loadSession(event.sessionId, emit, isOffline: !isOnline);
+    _armInactivityTimer();
   }
 
   Future<void> _onNewConversationRequested(
@@ -86,6 +118,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     Emitter<ChatState> emit,
   ) async {
     _turnGeneration++;
+    _resetInsightMechanism();
     final current = state;
     final isOffline = current is ChatReady ? current.isOffline : false;
     await _chatRepository.setLastActiveSessionId(null);
@@ -97,6 +130,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
         awaitingResponse: false,
       ),
     );
+    _armInactivityTimer();
   }
 
   /// One independent request/response per message — never involves
@@ -271,6 +305,18 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       retryCount: 0,
       createdAt: now,
     );
+
+    if (!_insightSuspended) {
+      _insightMessageCount++;
+      if (_insightMessageCount % 5 == 0) {
+        _pendingInsightTrigger ??= InsightTrigger(
+          type: InsightTriggerType.messageCount,
+          triggerKey: InsightTriggerKeyBuilder.forMessageCount(_insightMessageCount),
+        );
+      }
+    }
+    _armInactivityTimer(); // FR-001b — resets "time since last message sent" now
+
     emit(
       current.copyWith(
         messages: [...current.messages, optimisticUser, optimisticAssistant],
@@ -287,11 +333,14 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       final maybeId = created.match((_) => null, (s) => s.id);
       if (maybeId == null) {
         final failure = created.getLeft().toNullable()!;
-        _failTurn(emit, optimisticAssistant.id, failure);
+        await _failTurn(emit, current.sessionId ?? '', optimisticAssistant.id, failure);
         return;
       }
       sessionId = maybeId;
       await _chatRepository.setLastActiveSessionId(sessionId);
+      final latest = state;
+      if (latest is! ChatReady || generation != _turnGeneration) return;
+      emit(latest.copyWith(sessionId: sessionId));
     } else {
       sessionId = current.sessionId!;
     }
@@ -400,7 +449,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     final maybeId = created.match((_) => null, (s) => s.id);
     if (maybeId == null) {
       final failure = created.getLeft().toNullable()!;
-      _failTurn(emit, placeholder.id, failure);
+      await _failTurn(emit, userMessage.sessionId, placeholder.id, failure);
       return;
     }
     await _chatRepository.setLastActiveSessionId(maybeId);
@@ -463,6 +512,7 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
       },
     );
     await _reconcileSilentFailure(emit, sessionId, assistantId, generation);
+    if (generation == _turnGeneration) await _onTurnResolved(sessionId, emit);
   }
 
   /// A failure yielded as (or before) the stream's very first item leaves the
@@ -518,14 +568,16 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     });
   }
 
-  void _failTurn(
+  Future<void> _failTurn(
     Emitter<ChatState> emit,
+    String sessionId,
     String assistantId,
     Failure failure,
-  ) {
+  ) async {
     final latest = state;
     if (latest is! ChatReady) return;
     emit(_applyFailure(latest, assistantId, failure));
+    await _onTurnResolved(sessionId, emit);
   }
 
   /// `null` for a retry's `userMessageId` — a retry never targets an
@@ -627,10 +679,126 @@ class ChatBloc extends Bloc<ChatEvent, ChatState> {
     return preceding.role == ChatRole.user ? preceding.id : null;
   }
 
+  // Conversation (re)opened — FR-009's "counters start fresh" moment.
+  // Called from _onStarted / _onConversationSelected /
+  // _onNewConversationRequested, right before emitting the fresh ChatReady.
+  void _resetInsightMechanism() {
+    _insightGeneration++;
+    _insightMessageCount = 0;
+    _insightInFlight = false;
+    _pendingInsightTrigger = null;
+    _inactivityTimer?.cancel();
+  }
+
+  void _armInactivityTimer() {
+    _inactivityTimer?.cancel();
+    if (!_isForegrounded || _insightSuspended) return;
+    _inactivityTimer = Timer(
+      _insightInactivityTimeout,
+      () => add(InsightInactivityTimerFired(DateTime.now())),
+    );
+  }
+
+  void _onForegroundChanged(
+    ChatForegroundChanged event,
+    Emitter<ChatState> emit,
+  ) {
+    _isForegrounded = event.isForegrounded;
+    if (!_isForegrounded) {
+      _inactivityTimer?.cancel();
+      return;
+    }
+    _armInactivityTimer(); // FR-010 — always a fresh 2 minutes, never a resumed partial count
+  }
+
+  Future<void> _onInsightInactivityTimerFired(
+    InsightInactivityTimerFired event,
+    Emitter<ChatState> emit,
+  ) async {
+    final current = state;
+    if (current is! ChatReady || current.sessionId == null) return; // research.md R6
+    if (_insightSuspended) return; // defensive — the timer is cancelled the instant suspension begins
+    final trigger = InsightTrigger(
+      type: InsightTriggerType.inactivity,
+      triggerKey: InsightTriggerKeyBuilder.forInactivity(event.firedAt),
+    );
+    if (current.awaitingResponse) {
+      _pendingInsightTrigger ??= trigger; // FR-003 — defer until the turn resolves
+      return;
+    }
+    await _startInsightAttempt(trigger, sessionId: current.sessionId!, emit: emit);
+  }
+
+  void _onInsightDismissed(InsightDismissed event, Emitter<ChatState> emit) {
+    final current = state;
+    if (current is! ChatReady || current.insight == null) return;
+    emit(current.copyWith(clearInsight: true));
+    _armInactivityTimer(); // FR-004/FR-008 — suspension ends, fresh window starts
+  }
+
+  Future<void> _startInsightAttempt(
+    InsightTrigger trigger, {
+    required String sessionId,
+    required Emitter<ChatState> emit,
+  }) async {
+    _inactivityTimer?.cancel();
+    _pendingInsightTrigger = null;
+    _insightInFlight = true;
+    final generation = _insightGeneration;
+    final anchorIndex = (state as ChatReady).messages.length;
+
+    if (!await _connectivityChecker.hasConnection()) {
+      _insightInFlight = false; // FR-007 — never attempted; resolved like a failure
+      if (generation == _insightGeneration) _armInactivityTimer();
+      return;
+    }
+
+    final result = await _chatRepository.createInsight(
+      sessionId: sessionId,
+      triggerType: trigger.type,
+      triggerKey: trigger.triggerKey,
+    );
+
+    _insightInFlight = false;
+    if (generation != _insightGeneration) return; // stale — conversation switched away mid-flight
+
+    final latest = state;
+    if (latest is! ChatReady) return;
+
+    result.match(
+      (failure) {
+        if (failure is AuthExpiredFailure) _reauthController.add(null);
+        _armInactivityTimer(); // FR-006 — no card, no indicator; occurrence fully resolved
+      },
+      (content) => emit(
+        latest.copyWith(insight: ProactiveInsight(content: content, anchorIndex: anchorIndex)),
+      ),
+    );
+  }
+
+  // Called once per turn resolution — the end of _consumeTurn (after
+  // _reconcileSilentFailure) and inside _failTurn, both now `Future<void>`.
+  Future<void> _onTurnResolved(String sessionId, Emitter<ChatState> emit) async {
+    final hadPending = _pendingInsightTrigger != null;
+    final trigger = _pendingInsightTrigger;
+    if (trigger != null) {
+      final current = state;
+      if (current is ChatReady && !current.awaitingResponse) {
+        await _startInsightAttempt(trigger, sessionId: sessionId, emit: emit);
+      }
+    }
+    // Only re-arm here if a deferred trigger just finished resolving without
+    // a card (failed/skipped) — a turn with no pending trigger leaves
+    // whatever timer _onMessageSubmitted already armed at send-time alone
+    // (research.md R4).
+    if (hadPending && !_insightSuspended) _armInactivityTimer();
+  }
+
   @override
   Future<void> close() {
     unawaited(_connectivitySubscription.cancel());
     unawaited(_reauthController.close());
+    _inactivityTimer?.cancel();
     return super.close();
   }
 }

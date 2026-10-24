@@ -7,6 +7,7 @@ import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_sessions_page.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
 import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
 import 'package:cerne/features/session/domain/repositories/session_repository.dart';
 import 'package:fpdart/fpdart.dart';
@@ -133,6 +134,19 @@ class ChatRepositoryImpl implements ChatRepository {
     _savedMessageEntryIds = {..._savedMessageEntryIds, chatMessageId: entryId};
     await _localCache.writeSavedMessageEntryIds(_savedMessageEntryIds);
   }
+
+  @override
+  Future<Either<Failure, String>> createInsight({
+    required String sessionId,
+    required InsightTriggerType triggerType,
+    required String triggerKey,
+  }) => _retryAfterSilentRefreshIfExpired(
+    () => _remoteDataSource.createInsight(
+      sessionId: sessionId,
+      triggerType: triggerType,
+      triggerKey: triggerKey,
+    ),
+  );
 
   /// research.md R3 — retries the whole call once, only if the *first* item
   /// is `AuthExpiredFailure` (i.e. before any `ChatStreamEvent` was ever

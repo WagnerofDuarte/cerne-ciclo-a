@@ -132,6 +132,11 @@ class DesignTokens {
   static const double sizeAvatarMenu = 40;
   static const double sizeBookmarkIcon = 16;
   static const double spacingBookmarkGap = 6;
+  static const double widthInsightSpine = 3;
+  static const double spacingInsightPaddingLeft = 20;
+  static const double spacingInsightPaddingVertical = 14;
+  static const double spacingInsightHeaderGap = 6;
+  static const double sizeInsightDismissIcon = 14;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [

@@ -70,3 +70,29 @@ class ChatConnectivityChanged extends ChatEvent {
   @override
   List<Object?> get props => [isOnline];
 }
+
+/// App-level backgrounding/resume, drawer open/close, or a Records/Settings
+/// push/pop — all treated identically (research.md R10, FR-010).
+class ChatForegroundChanged extends ChatEvent {
+  const ChatForegroundChanged(this.isForegrounded);
+
+  final bool isForegrounded;
+
+  @override
+  List<Object?> get props => [isForegrounded];
+}
+
+/// The 2-minute inactivity `Timer` elapsed (research.md R4, FR-001b).
+class InsightInactivityTimerFired extends ChatEvent {
+  const InsightInactivityTimerFired(this.firedAt);
+
+  final DateTime firedAt;
+
+  @override
+  List<Object?> get props => [firedAt];
+}
+
+/// Tapping a visible insight card's "x" (FR-008).
+class InsightDismissed extends ChatEvent {
+  const InsightDismissed();
+}

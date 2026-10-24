@@ -7,6 +7,7 @@ import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_sessions_page.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
 import 'package:cerne/features/session/domain/entities/session.dart';
 import 'package:cerne/features/session/domain/repositories/session_repository.dart';
 import 'package:fpdart/fpdart.dart';
@@ -58,6 +59,7 @@ void main() {
 
   setUpAll(() {
     registerFallbackValue(<ChatSession>[]);
+    registerFallbackValue(InsightTriggerType.messageCount);
   });
 
   setUp(() {
@@ -358,6 +360,87 @@ void main() {
         await repository.recordMessageSaved(chatMessageId: 'm1', entryId: 'e1');
 
         expect(repository.savedEntryIdFor('m1'), 'e1');
+      },
+    );
+  });
+
+  group('createInsight', () {
+    test(
+      '#7 AuthExpiredFailure then a successful silent refresh -> retried '
+      'transparently, Right(content)',
+      () async {
+        var callCount = 0;
+        when(
+          () => remoteDataSource.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async {
+          callCount++;
+          return callCount == 1 ? const Left(_authExpired) : const Right('insight text');
+        });
+        when(() => sessionRepository.refresh()).thenAnswer((_) async => Right(_buildAuthSession()));
+
+        final result = await repository.createInsight(
+          sessionId: 's1',
+          triggerType: InsightTriggerType.messageCount,
+          triggerKey: 'message_count:5',
+        );
+
+        expect(result, const Right<Failure, String>('insight text'));
+        verify(() => sessionRepository.refresh()).called(1);
+      },
+    );
+
+    test(
+      '#8 AuthExpiredFailure, silent refresh fails -> '
+      "Left(AuthExpiredFailure(message: 'Session could not be renewed'))",
+      () async {
+        when(
+          () => remoteDataSource.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Left(_authExpired));
+        when(() => sessionRepository.refresh()).thenAnswer((_) async => const Left(_authExpired));
+
+        final result = await repository.createInsight(
+          sessionId: 's1',
+          triggerType: InsightTriggerType.messageCount,
+          triggerKey: 'message_count:5',
+        );
+
+        expect(
+          result,
+          const Left<Failure, String>(
+            AuthExpiredFailure(message: 'Session could not be renewed', requestId: ''),
+          ),
+        );
+      },
+    );
+
+    test(
+      '#9 createInsight never reads or writes ChatLocalCache, for any outcome',
+      () async {
+        when(
+          () => remoteDataSource.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('insight text'));
+
+        await repository.createInsight(
+          sessionId: 's1',
+          triggerType: InsightTriggerType.messageCount,
+          triggerKey: 'message_count:5',
+        );
+
+        verifyNever(() => localCache.writeMessagesForSession(any(), any()));
+        verifyNever(() => localCache.writeSessions(any()));
+        verifyNever(() => localCache.writeSavedMessageEntryIds(any()));
       },
     );
   });

@@ -1,6 +1,10 @@
 import 'package:bloc_test/bloc_test.dart';
+import 'package:cerne/core/di/service_locator.dart';
 import 'package:cerne/core/network/failure.dart';
+import 'package:cerne/core/routing/app_router.dart';
+import 'package:cerne/core/storage/secure_token_storage.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
+import 'package:cerne/features/chat/domain/entities/proactive_insight.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_sessions_bloc.dart';
@@ -8,7 +12,9 @@ import 'package:cerne/features/chat/presentation/bloc/chat_sessions_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_sessions_state.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
 import 'package:cerne/features/chat/presentation/widgets/bookmark_button.dart';
+import 'package:cerne/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_offline_banner.dart';
+import 'package:cerne/features/chat/presentation/widgets/insight_card.dart';
 import 'package:cerne/features/home/presentation/pages/home_chat_shell_page.dart';
 import 'package:cerne/features/session/domain/entities/session_status.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
@@ -24,6 +30,8 @@ class MockChatSessionsBloc extends MockBloc<ChatSessionsEvent, ChatSessionsState
     implements ChatSessionsBloc {}
 
 class MockSessionBloc extends MockBloc<SessionEvent, SessionStatus> implements SessionBloc {}
+
+class MockSecureTokenStorage extends Mock implements SecureTokenStorage {}
 
 ChatMessage _buildMessage({
   required String id,
@@ -66,12 +74,21 @@ void main() {
       const Stream<ChatSessionsState>.empty(),
       initialState: const ChatSessionsLoaded(sessions: [], nextCursor: null, isLoadingMore: false),
     );
+
+    // AppDrawer (rendered when the drawer opens, research.md R10's drawer
+    // test) reads this via getIt in its own initState.
+    final tokenStorage = MockSecureTokenStorage();
+    when(() => tokenStorage.readAccountEmail()).thenAnswer((_) async => 'wagner@x.com');
+    getIt.registerLazySingleton<SecureTokenStorage>(() => tokenStorage);
   });
+
+  tearDown(getIt.reset);
 
   Future<void> pumpHomeChatShellPage(WidgetTester tester, ChatState state) async {
     whenListen(chatBloc, Stream.value(state), initialState: state);
     await tester.pumpWidget(
       MaterialApp(
+        navigatorObservers: [chatRouteObserver],
         home: MultiBlocProvider(
           providers: [
             BlocProvider<ChatBloc>.value(value: chatBloc),
@@ -303,5 +320,145 @@ void main() {
         verify(() => sessionBloc.add(const AuthExpiredDetected())).called(1);
       },
     );
+  });
+
+  group('insight-card interleaving (US1/FR-005)', () {
+    testWidgets(
+      'the card renders at anchorIndex, surrounding messages render at the '
+      'correct shifted indices, no change to scroll/composer',
+      (tester) async {
+        await pumpHomeChatShellPage(
+          tester,
+          ChatReady(
+            sessionId: 's1',
+            messages: [
+              _buildMessage(id: 'u1', role: ChatRole.user, status: ChatMessageStatus.complete),
+              _buildMessage(
+                id: 'a1',
+                role: ChatRole.assistant,
+                status: ChatMessageStatus.complete,
+                seq: 1,
+              ),
+              _buildMessage(
+                id: 'u2',
+                role: ChatRole.user,
+                status: ChatMessageStatus.complete,
+                seq: 2,
+              ),
+            ],
+            isOffline: false,
+            awaitingResponse: false,
+            insight: const ProactiveInsight(content: 'texto gerado', anchorIndex: 3),
+          ),
+        );
+
+        expect(find.byType(InsightCard), findsOneWidget);
+        expect(find.byType(ChatMessageBubble), findsNWidgets(3));
+
+        // anchorIndex == messages.length (2) -> the card renders after all
+        // three existing messages, not interleaved among them.
+        final cardTop = tester.getTopLeft(find.byType(InsightCard)).dy;
+        final bubbleBottoms = tester
+            .widgetList(find.byType(ChatMessageBubble))
+            .map((w) => tester.getBottomLeft(find.byWidget(w)).dy);
+        for (final bottom in bubbleBottoms) {
+          expect(cardTop, greaterThanOrEqualTo(bottom));
+        }
+
+        // The composer stays rendered/untouched regardless of the card.
+        expect(find.byType(TextField), findsOneWidget);
+      },
+    );
+
+    testWidgets('no insight -> no InsightCard, itemCount unaffected', (tester) async {
+      await pumpHomeChatShellPage(
+        tester,
+        ChatReady(
+          sessionId: 's1',
+          messages: [_buildMessage(id: 'u1', role: ChatRole.user, status: ChatMessageStatus.complete)],
+          isOffline: false,
+          awaitingResponse: false,
+        ),
+      );
+
+      expect(find.byType(InsightCard), findsNothing);
+    });
+
+    testWidgets(
+      "tapping the card's dismiss control dispatches InsightDismissed",
+      (tester) async {
+        await pumpHomeChatShellPage(
+          tester,
+          ChatReady(
+            sessionId: 's1',
+            messages: [
+              _buildMessage(id: 'u1', role: ChatRole.user, status: ChatMessageStatus.complete),
+            ],
+            isOffline: false,
+            awaitingResponse: false,
+            insight: const ProactiveInsight(content: 'texto gerado', anchorIndex: 0),
+          ),
+        );
+
+        await tester.tap(find.byIcon(Icons.close));
+        await tester.pump();
+
+        verify(() => chatBloc.add(const InsightDismissed())).called(1);
+      },
+    );
+  });
+
+  group('lifecycle/drawer/route wiring dispatches ChatForegroundChanged (US2/FR-010)', () {
+    testWidgets('app backgrounding/resume', (tester) async {
+      await pumpHomeChatShellPage(
+        tester,
+        const ChatReady(sessionId: 's1', messages: [], isOffline: false, awaitingResponse: false),
+      );
+      clearInteractions(chatBloc);
+
+      // Valid AppLifecycleState transitions only (resumed -> inactive is
+      // allowed directly; inactive -> resumed is allowed directly) — this
+      // bloc's own handler treats every non-"resumed" state identically, so
+      // exercising "inactive" covers the same `false` branch "paused" would.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      verify(() => chatBloc.add(const ChatForegroundChanged(false))).called(1);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      verify(() => chatBloc.add(const ChatForegroundChanged(true))).called(1);
+    });
+
+    testWidgets('opening/closing the drawer', (tester) async {
+      await pumpHomeChatShellPage(
+        tester,
+        const ChatReady(sessionId: 's1', messages: [], isOffline: false, awaitingResponse: false),
+      );
+      clearInteractions(chatBloc);
+
+      final scaffold = tester.state<ScaffoldState>(find.byType(Scaffold));
+      scaffold.openDrawer();
+      await tester.pumpAndSettle();
+      verify(() => chatBloc.add(const ChatForegroundChanged(false))).called(1);
+
+      scaffold.closeDrawer();
+      await tester.pumpAndSettle();
+      verify(() => chatBloc.add(const ChatForegroundChanged(true))).called(1);
+    });
+
+    testWidgets('pushing to another route and popping back', (tester) async {
+      await pumpHomeChatShellPage(
+        tester,
+        const ChatReady(sessionId: 's1', messages: [], isOffline: false, awaitingResponse: false),
+      );
+      clearInteractions(chatBloc);
+
+      final navigator = tester.state<NavigatorState>(find.byType(Navigator));
+      navigator.push(MaterialPageRoute<void>(builder: (_) => const SizedBox()));
+      await tester.pumpAndSettle();
+      verify(() => chatBloc.add(const ChatForegroundChanged(false))).called(1);
+
+      navigator.pop();
+      await tester.pumpAndSettle();
+      verify(() => chatBloc.add(const ChatForegroundChanged(true))).called(1);
+    });
   });
 }

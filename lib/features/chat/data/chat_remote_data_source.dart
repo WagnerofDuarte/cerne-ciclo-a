@@ -8,6 +8,7 @@ import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_sessions_page.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
 import 'package:fpdart/fpdart.dart';
 
 const _malformedChatFailure = ValidationFailure(
@@ -201,6 +202,44 @@ class ChatRemoteDataSource {
     createdAt: DateTime.parse(data['createdAt'] as String),
     updatedAt: DateTime.parse(data['updatedAt'] as String),
   );
+
+  Future<Either<Failure, String>> createInsight({
+    required String sessionId,
+    required InsightTriggerType triggerType,
+    required String triggerKey,
+  }) async {
+    final result = await _apiClient.call(
+      'chat-insight-create',
+      method: 'POST',
+      pathSegments: [sessionId],
+      body: {'triggerType': _wireTriggerType(triggerType), 'triggerKey': triggerKey},
+    );
+    return result.flatMap(_parseInsightContent);
+  }
+
+  String _wireTriggerType(InsightTriggerType type) => switch (type) {
+    InsightTriggerType.messageCount => 'message_count',
+    InsightTriggerType.inactivity => 'inactivity',
+  };
+
+  // research.md R7 — collapses the 200-response `status: 'failed'` outcome
+  // into the same `Left` channel every transport failure already uses.
+  Either<Failure, String> _parseInsightContent(Map<String, dynamic> data) {
+    try {
+      if ((data['status'] as String?) == 'ready') {
+        return Right(data['content'] as String);
+      }
+      return Left(
+        ErrorMapper.fromResponse({
+          'code': data['errorCode'],
+          'message': 'Proactive insight generation failed',
+          'requestId': data['id'],
+        }),
+      );
+    } on TypeError {
+      return const Left(_malformedChatFailure);
+    }
+  }
 
   ChatMessage _parseMessageFields(Map<String, dynamic> data) => ChatMessage(
     id: data['id'] as String,

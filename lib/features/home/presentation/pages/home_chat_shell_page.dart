@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:cerne/core/design_tokens.dart';
+import 'package:cerne/core/routing/app_router.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
@@ -10,6 +11,7 @@ import 'package:cerne/features/chat/presentation/bloc/chat_state.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_composer.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_message_bubble.dart';
 import 'package:cerne/features/chat/presentation/widgets/chat_offline_banner.dart';
+import 'package:cerne/features/chat/presentation/widgets/insight_card.dart';
 import 'package:cerne/features/home/presentation/widgets/app_drawer.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
 import 'package:cerne/features/session/presentation/bloc/session_event.dart';
@@ -26,12 +28,14 @@ class HomeChatShellPage extends StatefulWidget {
   State<HomeChatShellPage> createState() => _HomeChatShellPageState();
 }
 
-class _HomeChatShellPageState extends State<HomeChatShellPage> {
+class _HomeChatShellPageState extends State<HomeChatShellPage>
+    with WidgetsBindingObserver, RouteAware {
   late final StreamSubscription<void> _reauthSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // The one sanctioned cross-bloc touch point (research.md R3/R7) — lives
     // in this widget, never inside `ChatBloc` itself.
     _reauthSubscription = context.read<ChatBloc>().reauthRequired.listen((_) {
@@ -41,10 +45,36 @@ class _HomeChatShellPageState extends State<HomeChatShellPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    chatRouteObserver.subscribe(this, ModalRoute.of(context)! as PageRoute<void>);
+  }
+
+  @override
   void dispose() {
+    chatRouteObserver.unsubscribe(this);
+    WidgetsBinding.instance.removeObserver(this);
     _reauthSubscription.cancel();
     super.dispose();
   }
+
+  // Pauses the inactivity timer for app-level backgrounding (FR-010,
+  // research.md R10) — every other AppLifecycleState maps to "not
+  // foregrounded".
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    context.read<ChatBloc>().add(
+      ChatForegroundChanged(state == AppLifecycleState.resumed),
+    );
+  }
+
+  // Pushing to Records/Settings and coming back (FR-010, research.md R10) —
+  // `ChatBloc`'s one instance stays alive underneath the whole time.
+  @override
+  void didPushNext() => context.read<ChatBloc>().add(const ChatForegroundChanged(false));
+
+  @override
+  void didPopNext() => context.read<ChatBloc>().add(const ChatForegroundChanged(true));
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +82,7 @@ class _HomeChatShellPageState extends State<HomeChatShellPage> {
       backgroundColor: DesignTokens.colorSurfaceBg,
       drawer: const AppDrawer(),
       onDrawerChanged: (isOpen) {
+        context.read<ChatBloc>().add(ChatForegroundChanged(!isOpen));
         if (isOpen) {
           context.read<ChatSessionsBloc>().add(const SessionsRefreshRequested());
         }
@@ -71,6 +102,7 @@ class _HomeChatShellPageState extends State<HomeChatShellPage> {
           final isOffline = chatReady?.isOffline ?? false;
           final canSend = chatReady?.canSend ?? false;
           final loadFailure = chatReady?.loadFailure;
+          final insight = chatReady?.insight;
 
           return Column(
             children: [
@@ -87,14 +119,26 @@ class _HomeChatShellPageState extends State<HomeChatShellPage> {
                         padding: const EdgeInsets.symmetric(
                           vertical: DesignTokens.spacingMd,
                         ),
-                        itemCount: messages.length,
+                        itemCount: messages.length + (insight == null ? 0 : 1),
                         itemBuilder: (context, index) {
-                          final message = messages[index];
+                          if (insight != null && index == insight.anchorIndex) {
+                            return InsightCard(
+                              content: insight.content,
+                              onDismiss: () => context.read<ChatBloc>().add(
+                                const InsightDismissed(),
+                              ),
+                            );
+                          }
+                          final messageIndex =
+                              (insight != null && index > insight.anchorIndex)
+                              ? index - 1
+                              : index;
+                          final message = messages[messageIndex];
                           return ChatMessageBubble(
                             message: message,
                             onRetryTap: () {
-                              final userMessageId = index > 0
-                                  ? messages[index - 1].id
+                              final userMessageId = messageIndex > 0
+                                  ? messages[messageIndex - 1].id
                                   : null;
                               if (userMessageId == null) return;
                               context.read<ChatBloc>().add(

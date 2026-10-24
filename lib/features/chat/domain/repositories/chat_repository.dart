@@ -3,6 +3,7 @@ import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_sessions_page.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
 import 'package:fpdart/fpdart.dart';
 
 /// The shared seam `ChatBloc`/`ChatSessionsBloc` depend on (data-model.md,
@@ -71,5 +72,18 @@ abstract class ChatRepository {
   Future<void> recordMessageSaved({
     required String chatMessageId,
     required String entryId,
+  });
+
+  /// `POST /chat/sessions/:id/insight` (`chat-insight-create`). `Right(content)`
+  /// only for `status: 'ready'`; every other outcome — a transport failure,
+  /// or a 200 response with `status: 'failed'` — is `Left` (research.md R7).
+  /// Retries once via `SessionRepository.refresh()` on `AuthExpiredFailure`,
+  /// the same shape as every other non-streaming call (research.md R7).
+  /// Never reads or writes any local cache — nothing about an insight is
+  /// ever persisted (FR-009).
+  Future<Either<Failure, String>> createInsight({
+    required String sessionId,
+    required InsightTriggerType triggerType,
+    required String triggerKey,
   });
 }

@@ -1,6 +1,7 @@
 import 'package:cerne/core/network/failure.dart';
 import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
+import 'package:cerne/features/chat/domain/entities/proactive_insight.dart';
 import 'package:equatable/equatable.dart';
 
 sealed class ChatState extends Equatable {
@@ -27,6 +28,7 @@ class ChatReady extends ChatState {
     required this.awaitingResponse,
     this.loadFailure,
     this.bookmarks = const {},
+    this.insight,
   });
 
   /// `null` = empty conversation, no session created yet (FR-010).
@@ -48,6 +50,10 @@ class ChatReady extends ChatState {
   /// key means `BookmarkStatus.idle` (research.md R5).
   final Map<String, BookmarkStatus> bookmarks;
 
+  /// `null` = no card visible (FR-004). Never persisted/reconstructed
+  /// (FR-009) — always `null` on a fresh `ChatReady`.
+  final ProactiveInsight? insight;
+
   bool get canSend => !isOffline && !awaitingResponse && loadFailure == null;
 
   BookmarkStatus bookmarkStatusFor(String messageId) =>
@@ -63,6 +69,8 @@ class ChatReady extends ChatState {
     bool? awaitingResponse,
     Object? loadFailure = _unset,
     Map<String, BookmarkStatus>? bookmarks,
+    ProactiveInsight? insight,
+    bool clearInsight = false,
   }) {
     return ChatReady(
       sessionId: clearSessionId ? null : (sessionId ?? this.sessionId),
@@ -73,6 +81,7 @@ class ChatReady extends ChatState {
           ? this.loadFailure
           : loadFailure as Failure?,
       bookmarks: bookmarks ?? this.bookmarks,
+      insight: clearInsight ? null : (insight ?? this.insight),
     );
   }
 
@@ -84,5 +93,6 @@ class ChatReady extends ChatState {
     awaitingResponse,
     loadFailure,
     bookmarks,
+    insight,
   ];
 }

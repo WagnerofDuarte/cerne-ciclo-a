@@ -4,6 +4,7 @@ import 'package:cerne/core/network/sse_frame.dart';
 import 'package:cerne/features/chat/data/chat_remote_data_source.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:test/test.dart';
@@ -246,6 +247,147 @@ void main() {
           body: const {},
         ),
       ).called(1);
+    });
+  });
+
+  group('createInsight', () {
+    void stubCall(Either<Failure, Map<String, dynamic>> result) {
+      when(
+        () => apiClient.call(
+          'chat-insight-create',
+          method: any(named: 'method'),
+          pathSegments: any(named: 'pathSegments'),
+          body: any(named: 'body'),
+        ),
+      ).thenAnswer((_) async => result);
+    }
+
+    test('#1 calls chat-insight-create with [sessionId] and the wire body', () async {
+      stubCall(Right({'status': 'ready', 'content': 'Some insight text'}));
+
+      await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.messageCount,
+        triggerKey: 'message_count:5',
+      );
+
+      verify(
+        () => apiClient.call(
+          'chat-insight-create',
+          method: 'POST',
+          pathSegments: ['s1'],
+          body: {'triggerType': 'message_count', 'triggerKey': 'message_count:5'},
+        ),
+      ).called(1);
+    });
+
+    test('inactivity triggerType maps to "inactivity" on the wire', () async {
+      stubCall(Right({'status': 'ready', 'content': 'x'}));
+
+      await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.inactivity,
+        triggerKey: 'inactivity:2026-01-01T00:00:00.000Z',
+      );
+
+      verify(
+        () => apiClient.call(
+          'chat-insight-create',
+          method: 'POST',
+          pathSegments: ['s1'],
+          body: {
+            'triggerType': 'inactivity',
+            'triggerKey': 'inactivity:2026-01-01T00:00:00.000Z',
+          },
+        ),
+      ).called(1);
+    });
+
+    test('#1 status: ready -> Right(content)', () async {
+      stubCall(Right({'status': 'ready', 'content': 'Some insight text'}));
+
+      final result = await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.messageCount,
+        triggerKey: 'message_count:5',
+      );
+
+      expect(result, const Right<Failure, String>('Some insight text'));
+    });
+
+    test(
+      '#2 status: failed with errorCode AI_GENERATION_TIMEOUT -> '
+      'Left(AiGenerationTimeoutFailure)',
+      () async {
+        stubCall(
+          Right({'status': 'failed', 'errorCode': 'AI_GENERATION_TIMEOUT', 'id': 'ins_1'}),
+        );
+
+        final result = await dataSource.createInsight(
+          sessionId: 's1',
+          triggerType: InsightTriggerType.messageCount,
+          triggerKey: 'message_count:5',
+        );
+
+        expect(result.isLeft(), isTrue);
+        expect(result.getLeft().toNullable(), isA<AiGenerationTimeoutFailure>());
+      },
+    );
+
+    test(
+      '#3 status: failed with null errorCode -> Left(ValidationFailure) '
+      "(ErrorMapper's own unrecognized-code default)",
+      () async {
+        stubCall(Right({'status': 'failed', 'errorCode': null, 'id': 'ins_1'}));
+
+        final result = await dataSource.createInsight(
+          sessionId: 's1',
+          triggerType: InsightTriggerType.messageCount,
+          triggerKey: 'message_count:5',
+        );
+
+        expect(result.isLeft(), isTrue);
+        expect(result.getLeft().toNullable(), isA<ValidationFailure>());
+      },
+    );
+
+    test('#4 missing status -> Left(_malformedChatFailure), never throws', () async {
+      stubCall(Right({'content': 'x'}));
+
+      final result = await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.messageCount,
+        triggerKey: 'message_count:5',
+      );
+
+      expect(result.isLeft(), isTrue);
+      expect(result.getLeft().toNullable(), isA<ValidationFailure>());
+    });
+
+    test('#5 a transport timeout passes through unchanged', () async {
+      const failure = NetworkTimeoutFailure(message: 'timeout', requestId: '');
+      stubCall(const Left(failure));
+
+      final result = await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.messageCount,
+        triggerKey: 'message_count:5',
+      );
+
+      expect(result, const Left<Failure, String>(failure));
+    });
+
+    test('#6 a no-connection failure passes through unchanged', () async {
+      const failure = NetworkOfflineFailure(message: 'offline', requestId: '');
+      stubCall(const Left(failure));
+
+      final result = await dataSource.createInsight(
+        sessionId: 's1',
+        triggerType: InsightTriggerType.messageCount,
+        triggerKey: 'message_count:5',
+      );
+
+      expect(result, const Left<Failure, String>(failure));
     });
   });
 }

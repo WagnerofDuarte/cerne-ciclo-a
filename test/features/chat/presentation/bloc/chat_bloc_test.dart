@@ -7,6 +7,8 @@ import 'package:cerne/features/chat/domain/entities/bookmark_status.dart';
 import 'package:cerne/features/chat/domain/entities/chat_message.dart';
 import 'package:cerne/features/chat/domain/entities/chat_session.dart';
 import 'package:cerne/features/chat/domain/entities/chat_stream_event.dart';
+import 'package:cerne/features/chat/domain/entities/insight_trigger.dart';
+import 'package:cerne/features/chat/domain/entities/proactive_insight.dart';
 import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_bloc.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_event.dart';
@@ -72,9 +74,12 @@ void main() {
   late MockConnectivityChecker connectivityChecker;
   late MockCreateEntryUseCase createEntryUseCase;
   late StreamController<bool> connectivityController;
+  late StreamController<Either<Failure, ChatStreamEvent>> fifthTurnControllerRef;
+  late Completer<Either<Failure, String>> inFlightCompleterRef;
 
   setUpAll(() {
     registerFallbackValue(EntrySource.chat);
+    registerFallbackValue(InsightTriggerType.messageCount);
   });
 
   setUp(() {
@@ -93,15 +98,42 @@ void main() {
         entryId: any(named: 'entryId'),
       ),
     ).thenAnswer((_) async {});
+    // Default: no card, no indicator (FR-006) — individual tests override
+    // this when they need success/offline/auth-expired behavior.
+    when(
+      () => chatRepository.createInsight(
+        sessionId: any(named: 'sessionId'),
+        triggerType: any(named: 'triggerType'),
+        triggerKey: any(named: 'triggerKey'),
+      ),
+    ).thenAnswer(
+      (_) async =>
+          const Left(AiGenerationTimeoutFailure(message: 'timeout', requestId: '')),
+    );
   });
 
   tearDown(() => connectivityController.close());
 
-  ChatBloc buildBloc() => ChatBloc(
+  ChatBloc buildBloc({Duration? insightInactivityTimeout}) => ChatBloc(
     chatRepository: chatRepository,
     connectivityChecker: connectivityChecker,
     createEntryUseCase: createEntryUseCase,
+    insightInactivityTimeout: insightInactivityTimeout ?? const Duration(minutes: 2),
   );
+
+  // A turn that completes immediately with no tokens — sufficient for every
+  // insight-mechanism scenario below, which only cares about
+  // awaitingResponse flipping back to false, never about message content.
+  void stubImmediateTurn() {
+    when(
+      () => chatRepository.sendMessage(
+        sessionId: any(named: 'sessionId'),
+        content: any(named: 'content'),
+      ),
+    ).thenAnswer(
+      (_) => Stream.fromIterable([const Right(StreamDone(assistantMessageId: 'ignored'))]),
+    );
+  }
 
   group('ChatStarted', () {
     blocTest<ChatBloc, ChatState>(
@@ -213,6 +245,8 @@ void main() {
             .having((s) => s.messages[1].role, 'second role', ChatRole.assistant)
             .having((s) => s.messages[1].status, 'second status', ChatMessageStatus.streaming)
             .having((s) => s.awaitingResponse, 'awaitingResponse', true),
+        isA<ChatReady>() // the lazily-created session id is written back
+            .having((s) => s.sessionId, 'sessionId', 's1'),
       ],
       verify: (_) {
         verify(() => chatRepository.createSession(title: 'olá')).called(1);
@@ -1120,6 +1154,800 @@ void main() {
         expect((state as ChatReady).awaitingResponse, isTrue);
         expect(state.messages, hasLength(3));
         expect(state.bookmarkStatusFor('m1'), BookmarkStatus.saving);
+      },
+    );
+  });
+
+  group('Insight mechanism — US1 message-count trigger', () {
+    blocTest<ChatBloc, ChatState>(
+      '#1 5 messages each resolving normally -> createInsight called exactly '
+      'once with triggerType: messageCount, triggerKey: "message_count:5", '
+      'only after the 5th turn completes; emitted state carries insight != null',
+      setUp: () {
+        stubImmediateTurn();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+      verify: (bloc) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
+        expect((bloc.state as ChatReady).insight, isNotNull);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#2 continuing from #1: dismiss then send 5 more -> a 2nd call with '
+      'triggerKey: "message_count:10"',
+      setUp: () {
+        stubImmediateTurn();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        bloc.add(const InsightDismissed());
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('n$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:10',
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#3 a message-count crossing landing on a message whose turn is still '
+      'streaming defers the call until the turn resolves',
+      setUp: () {
+        var callIndex = 0;
+        final fifthTurnController =
+            StreamController<Either<Failure, ChatStreamEvent>>();
+        when(
+          () => chatRepository.sendMessage(
+            sessionId: any(named: 'sessionId'),
+            content: any(named: 'content'),
+          ),
+        ).thenAnswer((_) {
+          callIndex++;
+          if (callIndex == 5) return fifthTurnController.stream;
+          return Stream.fromIterable([
+            const Right(StreamDone(assistantMessageId: 'ignored')),
+          ]);
+        });
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+        fifthTurnControllerRef = fifthTurnController;
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 4; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        bloc.add(const MessageSubmitted('m4')); // the 5th message — crosses to 5
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        // Turn still streaming — the call must not have fired yet.
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+        fifthTurnControllerRef.add(const Right(StreamDone(assistantMessageId: 'ignored')));
+        await fifthTurnControllerRef.close();
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#16 sending 4 messages, letting the 5th fail outright and retrying '
+      'it, does not double-count the retry — the crossing still fires '
+      'exactly once, at the correct message',
+      setUp: () {
+        var callIndex = 0;
+        when(
+          () => chatRepository.sendMessage(
+            sessionId: any(named: 'sessionId'),
+            content: any(named: 'content'),
+          ),
+        ).thenAnswer((_) {
+          callIndex++;
+          if (callIndex == 5) {
+            // Reconciles ids first (so the retry below takes the normal
+            // `retryMessage` path, not the lazy-session-creation path a
+            // still-optimistic user message would trigger) before failing.
+            return Stream.fromIterable([
+              const Right(MessageCreated(userMessageId: 'u5', assistantMessageId: 'a5')),
+              const Left(NetworkOfflineFailure(message: 'offline', requestId: '')),
+            ]);
+          }
+          return Stream.fromIterable([
+            const Right(StreamDone(assistantMessageId: 'ignored')),
+          ]);
+        });
+        when(
+          () => chatRepository.retryMessage(
+            sessionId: any(named: 'sessionId'),
+            userMessageId: any(named: 'userMessageId'),
+          ),
+        ).thenAnswer(
+          (_) => Stream.fromIterable([
+            const Right(StreamDone(assistantMessageId: 'ignored')),
+          ]),
+        );
+        // The failed 5th turn has empty content, so `_reconcileSilentFailure`
+        // re-fetches — irrelevant to this test, just needs a valid response.
+        when(() => chatRepository.listMessages('s1')).thenAnswer(
+          (_) async => const Right([]),
+        );
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 4; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        bloc.add(const MessageSubmitted('m4')); // 5th -> count=5, this turn fails
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+
+        final failedState = bloc.state as ChatReady;
+        final failedIndex = failedState.messages.indexWhere(
+          (m) => m.status == ChatMessageStatus.failed,
+        );
+        final userMessageId = failedState.messages[failedIndex - 1].id;
+        bloc.add(MessageRetryRequested(userMessageId));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+
+        // 4 more messages: if the retry had double-counted, this would
+        // already reach the 10th-message crossing.
+        for (var i = 0; i < 4; i++) {
+          bloc.add(MessageSubmitted('n$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:10',
+          ),
+        );
+
+        bloc.add(const MessageSubmitted('n4')); // the true 10th message
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:10',
+          ),
+        ).called(1);
+      },
+    );
+  });
+
+  group('Insight mechanism — US2 inactivity trigger', () {
+    blocTest<ChatBloc, ChatState>(
+      '#4 the inactivity timer fires once with triggerType: inactivity after '
+      'the configured timeout',
+      setUp: () {
+        // A successful resolution renders a card, which suspends the
+        // mechanism — the only way to assert "exactly one call" without
+        // racing against this test's own re-arm-on-failure behavior
+        // (verified separately by #10/#11).
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+      },
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 10)),
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) => bloc.add(const ChatForegroundChanged(true)),
+      wait: const Duration(milliseconds: 40),
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.inactivity,
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#5 sending a message before the timeout elapses means the original '
+      'timer never fires; a new one starts from the send instant',
+      setUp: stubImmediateTurn,
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 40)),
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const ChatForegroundChanged(true)); // arms the first timer at t=0
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        bloc.add(const MessageSubmitted('oi')); // resets to a fresh 40ms from t=20
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+        // t=45 total: the original timer (due at t=40) would have fired by
+        // now if it hadn't been reset; the reset one is due at t=60.
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.inactivity,
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#6 ChatForegroundChanged(false) before the timeout elapses means the '
+      'timer never fires while backgrounded',
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 20)),
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const ChatForegroundChanged(true));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const ChatForegroundChanged(false));
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      },
+      verify: (_) {
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#7 ChatForegroundChanged(false) after 90% of the configured duration, '
+      'then ChatForegroundChanged(true), starts a brand-new full-length '
+      'timer — it does not fire after only the remaining 10%',
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 100)),
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(const ChatForegroundChanged(true)); // arm at t=0 (due t=100)
+        await Future<void>.delayed(const Duration(milliseconds: 90));
+        bloc.add(const ChatForegroundChanged(false)); // pause at t=90
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        bloc.add(const ChatForegroundChanged(true)); // resume at t=95 (new timer due t=195)
+        await Future<void>.delayed(const Duration(milliseconds: 20)); // t=115 — only 20ms since resume
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100)); // past t=195
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.inactivity,
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#15 on a fresh "Novo Chat" (sessionId == null), the timer firing '
+      'never calls createInsight and stays disarmed until the first message '
+      'is sent',
+      setUp: stubImmediateTurn,
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 10)),
+      seed: () => const ChatReady(
+        sessionId: null,
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        bloc.add(InsightInactivityTimerFired(DateTime(2026, 1, 1)));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      },
+      verify: (_) {
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+      },
+    );
+  });
+
+  group('Insight mechanism — US3 failure/offline invisibility', () {
+    blocTest<ChatBloc, ChatState>(
+      '#8 a trigger that resolves to a visible card suspends the mechanism '
+      '— no further createInsight call fires even after another 5 messages '
+      'or another timeout, until InsightDismissed',
+      setUp: () {
+        stubImmediateTurn();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+      },
+      build: () => buildBloc(insightInactivityTimeout: const Duration(milliseconds: 10)),
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('n$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        bloc.add(InsightInactivityTimerFired(DateTime(2026, 1, 1)));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#9 a second, independently-satisfied trigger condition while a '
+      'createInsight call is still pending produces no 2nd call',
+      setUp: () {
+        stubImmediateTurn();
+        final completer = Completer<Either<Failure, String>>();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) => completer.future);
+        inFlightCompleterRef = completer;
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        // The first attempt is now in flight (completer unresolved).
+        bloc.add(InsightInactivityTimerFired(DateTime(2026, 1, 1)));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        inFlightCompleterRef.complete(const Right('texto gerado'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      },
+      verify: (_) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).called(1);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#10 createInsight resolving Left(AiGenerationTimeoutFailure) leaves '
+      'insight at/returning to null, and the next crossing fires normally '
+      'afterward',
+      setUp: () {
+        stubImmediateTurn();
+        var callIndex = 0;
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async {
+          callIndex++;
+          return callIndex == 1
+              ? const Left(AiGenerationTimeoutFailure(message: 'x', requestId: ''))
+              : const Right('texto gerado');
+        });
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect((bloc.state as ChatReady).insight, isNull);
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('n$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+      verify: (bloc) {
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:10',
+          ),
+        ).called(1);
+        expect((bloc.state as ChatReady).insight, isNotNull);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#11 ConnectivityChecker.hasConnection() returning false when a '
+      'trigger fires means createInsight is never called; the occurrence '
+      'resolves exactly like a failure',
+      setUp: () {
+        stubImmediateTurn();
+        var callCount = 0;
+        when(() => connectivityChecker.hasConnection()).thenAnswer((_) async {
+          callCount++;
+          // The first 5 calls are _onMessageSubmitted's own FR-012 pre-check
+          // (true, so the messages send); the 6th is the insight attempt's
+          // own pre-check (false).
+          return callCount <= 5;
+        });
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+      verify: (bloc) {
+        verifyNever(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        );
+        expect((bloc.state as ChatReady).insight, isNull);
+      },
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#13 a trigger firing (attempt in flight) on session A followed by '
+      'ConversationSelected(B) before it resolves means the stale call\'s '
+      'eventual resolution causes no state mutation; session B\'s own '
+      'counters start at 0',
+      setUp: () {
+        stubImmediateTurn();
+        final completer = Completer<Either<Failure, String>>();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) => completer.future);
+        inFlightCompleterRef = completer;
+        when(() => chatRepository.listMessages('session-b')).thenAnswer(
+          (_) async => const Right([]),
+        );
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        bloc.add(const ConversationSelected('session-b'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        inFlightCompleterRef.complete(const Right('texto gerado'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      },
+      verify: (bloc) {
+        final state = bloc.state as ChatReady;
+        expect(state.sessionId, 'session-b');
+        expect(state.insight, isNull);
+      },
+    );
+
+    test(
+      '#14 createInsight resolving Left(AuthExpiredFailure) emits '
+      'reauthRequired but insight stays null',
+      () async {
+        final chatRepository = MockChatRepository();
+        final connectivityChecker = MockConnectivityChecker();
+        final createEntryUseCase = MockCreateEntryUseCase();
+        final connectivityController = StreamController<bool>.broadcast();
+        when(() => connectivityChecker.onConnectivityChanged)
+            .thenAnswer((_) => connectivityController.stream);
+        when(() => connectivityChecker.hasConnection()).thenAnswer((_) async => true);
+        when(() => chatRepository.setLastActiveSessionId(any())).thenAnswer((_) async {});
+        when(
+          () => chatRepository.sendMessage(
+            sessionId: any(named: 'sessionId'),
+            content: any(named: 'content'),
+          ),
+        ).thenAnswer(
+          (_) => Stream.fromIterable([const Right(StreamDone(assistantMessageId: 'ignored'))]),
+        );
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer(
+          (_) async =>
+              const Left(AuthExpiredFailure(message: 'expired', requestId: '')),
+        );
+
+        final bloc = ChatBloc(
+          chatRepository: chatRepository,
+          connectivityChecker: connectivityChecker,
+          createEntryUseCase: createEntryUseCase,
+        );
+        var reauthCount = 0;
+        final subscription = bloc.reauthRequired.listen((_) => reauthCount++);
+        bloc.emit(
+          const ChatReady(
+            sessionId: 's1',
+            messages: [],
+            isOffline: false,
+            awaitingResponse: false,
+          ),
+        );
+
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+
+        expect(reauthCount, 1);
+        expect((bloc.state as ChatReady).insight, isNull);
+        await subscription.cancel();
+        await bloc.close();
+        await connectivityController.close();
+      },
+    );
+  });
+
+  group('Insight mechanism — US4 dismiss isolation', () {
+    blocTest<ChatBloc, ChatState>(
+      '#12 with a card visible and other messages present, InsightDismissed '
+      'emits a state with insight: null and an otherwise byte-identical '
+      'messages/sessionId/isOffline/awaitingResponse/bookmarks',
+      build: buildBloc,
+      seed: () => ChatReady(
+        sessionId: 's1',
+        messages: [_buildMessage(id: 'm1', role: ChatRole.user)],
+        isOffline: false,
+        awaitingResponse: false,
+        bookmarks: const {'m1': BookmarkStatus.saved},
+        insight: const ProactiveInsight(content: 'texto gerado', anchorIndex: 1),
+      ),
+      act: (bloc) => bloc.add(const InsightDismissed()),
+      expect: () => [
+        isA<ChatReady>()
+            .having((s) => s.insight, 'insight', isNull)
+            .having((s) => s.messages.map((m) => m.id), 'messages', ['m1'])
+            .having((s) => s.sessionId, 'sessionId', 's1')
+            .having((s) => s.isOffline, 'isOffline', false)
+            .having((s) => s.awaitingResponse, 'awaitingResponse', false)
+            .having((s) => s.bookmarks, 'bookmarks', {'m1': BookmarkStatus.saved}),
+      ],
+    );
+
+    blocTest<ChatBloc, ChatState>(
+      '#39 a dismissed/still-visible card never reappears after '
+      'ConversationSelected re-emits ChatReady, and the message-count '
+      'counter has restarted at zero',
+      setUp: () {
+        stubImmediateTurn();
+        when(
+          () => chatRepository.createInsight(
+            sessionId: any(named: 'sessionId'),
+            triggerType: any(named: 'triggerType'),
+            triggerKey: any(named: 'triggerKey'),
+          ),
+        ).thenAnswer((_) async => const Right('texto gerado'));
+        when(() => chatRepository.listMessages('s1')).thenAnswer(
+          (_) async => const Right([]),
+        );
+      },
+      build: buildBloc,
+      seed: () => const ChatReady(
+        sessionId: 's1',
+        messages: [],
+        isOffline: false,
+        awaitingResponse: false,
+      ),
+      act: (bloc) async {
+        for (var i = 0; i < 5; i++) {
+          bloc.add(MessageSubmitted('m$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+        expect((bloc.state as ChatReady).insight, isNotNull);
+
+        bloc.add(const ConversationSelected('s1'));
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        expect((bloc.state as ChatReady).insight, isNull);
+
+        for (var i = 0; i < 4; i++) {
+          bloc.add(MessageSubmitted('n$i'));
+          await Future<void>.delayed(const Duration(milliseconds: 5));
+        }
+      },
+      verify: (bloc) {
+        expect((bloc.state as ChatReady).insight, isNull);
+        verify(
+          () => chatRepository.createInsight(
+            sessionId: 's1',
+            triggerType: InsightTriggerType.messageCount,
+            triggerKey: 'message_count:5',
+          ),
+        ).called(1);
       },
     );
   });

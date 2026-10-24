@@ -23,8 +23,15 @@ import 'package:go_router/go_router.dart';
 /// regardless of `go_router`'s own internal navigator (research.md R3).
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Lets `HomeChatShellPage` detect being covered by (and returning from)
+/// Records/Settings so it can pause/resume RF08's inactivity timer
+/// (research.md R10) — `ChatBloc`'s one instance is never torn down by this
+/// navigation.
+final RouteObserver<PageRoute<void>> chatRouteObserver = RouteObserver<PageRoute<void>>();
+
 final GoRouter appRouter = GoRouter(
   navigatorKey: rootNavigatorKey,
+  observers: [chatRouteObserver],
   initialLocation: AppRoutes.splash,
   routes: [
     GoRoute(
