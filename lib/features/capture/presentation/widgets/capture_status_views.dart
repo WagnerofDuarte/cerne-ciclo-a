@@ -10,7 +10,12 @@ import 'package:flutter/material.dart';
 /// arc length itself pulses between near-zero and near-full — at the
 /// near-zero point it reads as a short dash instead of a ring.
 class CaptureLoadingIndicator extends StatefulWidget {
-  const CaptureLoadingIndicator({super.key});
+  const CaptureLoadingIndicator({
+    super.key,
+    this.size = DesignTokens.sizeLoadingIndicator,
+  });
+
+  final double size;
 
   @override
   State<CaptureLoadingIndicator> createState() =>
@@ -40,8 +45,8 @@ class _CaptureLoadingIndicatorState extends State<CaptureLoadingIndicator>
   Widget build(BuildContext context) {
     return Center(
       child: SizedBox(
-        width: DesignTokens.sizeLoadingIndicator,
-        height: DesignTokens.sizeLoadingIndicator,
+        width: widget.size,
+        height: widget.size,
         child: RotationTransition(
           turns: _controller,
           child: const CircularProgressIndicator(

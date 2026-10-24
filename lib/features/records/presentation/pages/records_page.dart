@@ -4,6 +4,7 @@ import 'package:cerne/core/design_tokens.dart';
 import 'package:cerne/core/network/failure.dart';
 import 'package:cerne/features/capture/presentation/widgets/open_insertion_modal.dart';
 import 'package:cerne/features/entries/domain/entities/entry.dart';
+import 'package:cerne/features/export/presentation/widgets/export_sheet.dart';
 import 'package:cerne/features/records/domain/entities/date_group.dart';
 import 'package:cerne/features/records/domain/entities/date_range_filter.dart';
 import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
@@ -33,6 +34,7 @@ class RecordsPage extends StatefulWidget {
 class _RecordsPageState extends State<RecordsPage> {
   final _scrollController = ScrollController();
   late final StreamSubscription<void> _reauthSubscription;
+  bool _isOpeningExportSheet = false;
 
   @override
   void initState() {
@@ -71,7 +73,7 @@ class _RecordsPageState extends State<RecordsPage> {
       body: SafeArea(
         child: Column(
           children: [
-            _Header(),
+            _Header(onExportPressed: () => _openExportSheet(context)),
             _SearchBar(),
             BlocBuilder<RecordsBloc, RecordsState>(
               builder: (context, state) {
@@ -134,6 +136,20 @@ class _RecordsPageState extends State<RecordsPage> {
     if (context.mounted) {
       context.read<RecordsBloc>().add(const RecordsLocalCacheRefreshed());
     }
+  }
+
+  Future<void> _openExportSheet(BuildContext context) async {
+    if (_isOpeningExportSheet) return; // FR-011
+    _isOpeningExportSheet = true;
+    final state = context.read<RecordsBloc>().state;
+    final dateRange = state is RecordsLoaded ? state.dateRange : DateRangeOption.allTime;
+    final bounds = dateRange.boundsAt(DateTime.now());
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => ExportSheet(periodStart: bounds.from, periodEnd: bounds.to),
+    );
+    if (mounted) _isOpeningExportSheet = false;
   }
 
   Widget _buildLoaded(BuildContext context, RecordsLoaded loaded) {
@@ -202,6 +218,10 @@ class _RecordsPageState extends State<RecordsPage> {
 }
 
 class _Header extends StatelessWidget {
+  const _Header({required this.onExportPressed});
+
+  final VoidCallback onExportPressed;
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -220,9 +240,8 @@ class _Header extends StatelessWidget {
           const Expanded(
             child: Text('Meus Registros', style: DesignTokens.textHeadlineMd),
           ),
-          // Inert placeholder — no export behavior in this unit (FR-008).
           IconButton(
-            onPressed: () {},
+            onPressed: onExportPressed,
             icon: const Icon(Icons.download_outlined, color: DesignTokens.colorTextPrimary),
           ),
         ],

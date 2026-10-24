@@ -34,6 +34,12 @@ import 'package:cerne/features/entries/data/entries_remote_data_source.dart';
 import 'package:cerne/features/entries/data/entries_repository_impl.dart';
 import 'package:cerne/features/entries/domain/repositories/entries_repository.dart';
 import 'package:cerne/features/entries/domain/usecases/create_entry_usecase.dart';
+import 'package:cerne/features/export/data/export_file_repository_impl.dart';
+import 'package:cerne/features/export/data/export_remote_data_source.dart';
+import 'package:cerne/features/export/data/export_repository_impl.dart';
+import 'package:cerne/features/export/domain/repositories/export_file_repository.dart';
+import 'package:cerne/features/export/domain/repositories/export_repository.dart';
+import 'package:cerne/features/export/presentation/bloc/export_bloc.dart';
 import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
 import 'package:cerne/features/session/data/session_remote_data_source.dart';
 import 'package:cerne/features/session/data/session_repository_impl.dart';
@@ -200,6 +206,27 @@ void setupServiceLocator() {
   );
   getIt.registerFactory<RecordsBloc>(
     () => RecordsBloc(entriesRepository: getIt<EntriesRepository>()),
+  );
+
+  // Export (P-RF05, research.md R6 — ExportBloc is sheet-scoped, never a singleton)
+  getIt.registerLazySingleton<ExportRemoteDataSource>(
+    () => ExportRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<ExportFileRepositoryImpl>(ExportFileRepositoryImpl.new);
+  getIt.registerLazySingleton<ExportRepository>(
+    () => ExportRepositoryImpl(
+      getIt<ExportRemoteDataSource>(),
+      sessionRepository: getIt<SessionRepository>(),
+    ),
+  );
+  getIt.registerLazySingleton<ExportFileRepository>(
+    () => getIt<ExportFileRepositoryImpl>(),
+  );
+  getIt.registerFactory<ExportBloc>(
+    () => ExportBloc(
+      exportRepository: getIt<ExportRepository>(),
+      exportFileRepository: getIt<ExportFileRepository>(),
+    ),
   );
 
   // Chat (P-RF04)

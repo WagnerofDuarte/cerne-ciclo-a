@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:cerne/core/network/error_mapper.dart';
 import 'package:cerne/core/network/failure.dart';
@@ -74,6 +75,61 @@ class ApiClient {
         );
       }
       return Right(rawData as Map<String, dynamic>? ?? const {});
+    } on DioException catch (e) {
+      return Left(_mapException(e));
+    }
+  }
+
+  /// A two-step fetch for an endpoint whose success response is a 302 to a
+  /// signed Storage URL, not JSON (research.md R1, contracts/
+  /// http-client-download-extension.md) — export-agnostic, any future
+  /// signed-URL-download unit reuses it as-is. Leg 1 talks to our own
+  /// backend function (same `apikey`/`Authorization` headers `call()`
+  /// already sends); leg 2 is a header-less fetch of the signed URL itself,
+  /// so this app's own credentials are never forwarded to a third-party
+  /// Storage host (Principle III).
+  Future<Either<Failure, Uint8List>> downloadFile(
+    String function, {
+    List<String>? pathSegments,
+    Map<String, dynamic>? queryParameters,
+    AuthMode authMode = AuthMode.userSession,
+  }) async {
+    final baseUrl = dotenv.env['FUNCTIONS_BASE_URL'] ?? '';
+    final segments = [function, ...?pathSegments];
+    final url = '$baseUrl/${segments.join('/')}';
+
+    final bearer = authMode == AuthMode.anonKey
+        ? _anonKey
+        : (await _tokenStorage.readAccessToken() ?? '');
+
+    try {
+      final redirectResponse = await _dio.request<void>(
+        url,
+        queryParameters: queryParameters,
+        options: Options(
+          method: 'GET',
+          headers: {'apikey': _anonKey, 'Authorization': 'Bearer $bearer'},
+          followRedirects: false,
+          validateStatus: (status) => status != null && status < 400,
+        ),
+      );
+
+      final location = redirectResponse.headers.value('location');
+      if (redirectResponse.statusCode != 302 || location == null) {
+        return const Left(
+          ValidationFailure(
+            message: 'Malformed response: expected a 302 redirect',
+            requestId: '',
+          ),
+        );
+      }
+
+      final fileResponse = await _dio.request<List<int>>(
+        location,
+        options: Options(method: 'GET', responseType: ResponseType.bytes),
+      );
+
+      return Right(Uint8List.fromList(fileResponse.data ?? const []));
     } on DioException catch (e) {
       return Left(_mapException(e));
     }
