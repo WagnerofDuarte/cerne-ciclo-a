@@ -23,6 +23,7 @@ class DesignTokens {
   static const Color colorWarningSync = Color(0xFFC98A3E);
   static const Color colorInfoOffline = Color(0xFF5C7A93);
   static const Color colorChatBubbleUser = Color(0xFFD9DFD3);
+  static const Color colorChartPlaceholder = Color(0xFFE1DACB);
 
   // Typography
   static const String _fontFraunces = 'Fraunces';
@@ -137,6 +138,10 @@ class DesignTokens {
   static const double spacingInsightPaddingVertical = 14;
   static const double spacingInsightHeaderGap = 6;
   static const double sizeInsightDismissIcon = 14;
+  static const double sizeAvatarSettings = 52;
+  static const double sizeChartBarMaxHeight = 120;
+  static const double sizeChartBarWidth = 20;
+  static const double sizeChartBarGap = 6;
 
   // Elevation
   static const List<BoxShadow> elevation1 = [

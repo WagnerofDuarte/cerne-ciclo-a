@@ -14,4 +14,9 @@ abstract class AuthRepository {
     required String email,
     required String password,
   });
+
+  /// `POST /auth/logout` (`auth-logout`). Does **not** clear
+  /// `SecureTokenStorage`/`SessionRepository` itself — that stays
+  /// `SettingsBloc`'s job (contracts/account-session-actions.md).
+  Future<Either<Failure, Unit>> logout();
 }

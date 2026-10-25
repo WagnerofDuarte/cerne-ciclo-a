@@ -14,6 +14,8 @@ import 'package:cerne/features/chat/presentation/bloc/chat_sessions_event.dart';
 import 'package:cerne/features/chat/presentation/bloc/chat_sessions_state.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
 import 'package:cerne/features/session/presentation/bloc/session_event.dart';
+import 'package:cerne/features/settings/domain/entities/account_profile.dart';
+import 'package:cerne/features/settings/domain/repositories/account_profile_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -31,17 +33,30 @@ class AppDrawer extends StatefulWidget {
 class _AppDrawerState extends State<AppDrawer> {
   final _scrollController = ScrollController();
   late final StreamSubscription<void> _reauthSubscription;
-  late final Future<String?> _accountEmail;
+  late final Future<({String? displayName, String? email})> _profile;
 
   @override
   void initState() {
     super.initState();
-    _accountEmail = getIt<SecureTokenStorage>().readAccountEmail();
+    _profile = _loadProfile();
     _scrollController.addListener(_maybeRequestNextPage);
     _reauthSubscription = context.read<ChatSessionsBloc>().reauthRequired.listen((_) {
       if (!mounted) return;
       context.read<SessionBloc>().add(const AuthExpiredDetected());
     });
+  }
+
+  // Resolves via `AccountProfileRepository` (`settings/domain/`), never
+  // `AccountProfileLocalCache` directly — the same "presentation depends on
+  // a domain interface, resolved via get_it" shape every other
+  // cross-feature touch in this app already uses (research.md R13,
+  // contracts/app-drawer-display-name-extension.md).
+  Future<({String? displayName, String? email})> _loadProfile() async {
+    final email = await getIt<SecureTokenStorage>().readAccountEmail();
+    final cached = await getIt<AccountProfileRepository>().readCachedDisplayName();
+    final displayName =
+        cached ?? (email == null ? null : AccountProfile.defaultDisplayNameFromEmail(email));
+    return (displayName: displayName, email: email);
   }
 
   void _maybeRequestNextPage() {
@@ -69,10 +84,11 @@ class _AppDrawerState extends State<AppDrawer> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            FutureBuilder<String?>(
-              future: _accountEmail,
+            FutureBuilder<({String? displayName, String? email})>(
+              future: _profile,
               builder: (context, snapshot) {
-                final email = snapshot.data;
+                final displayName = snapshot.data?.displayName ?? '';
+                final profile = AccountProfile(displayName: displayName, email: '');
                 return Padding(
                   padding: const EdgeInsets.all(DesignTokens.spacingLg),
                   child: Row(
@@ -81,7 +97,7 @@ class _AppDrawerState extends State<AppDrawer> {
                         radius: DesignTokens.sizeAvatarMenu / 2,
                         backgroundColor: DesignTokens.colorPrimary,
                         child: Text(
-                          email == null ? '?' : _initialsFromEmail(email),
+                          profile.initials,
                           style: DesignTokens.textTitleSm.copyWith(
                             color: DesignTokens.colorOnPrimary,
                           ),
@@ -90,7 +106,7 @@ class _AppDrawerState extends State<AppDrawer> {
                       const SizedBox(width: DesignTokens.spacingMd),
                       Expanded(
                         child: Text(
-                          email == null ? '' : _displayNameFromEmail(email),
+                          displayName,
                           style: DesignTokens.textTitleSm,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -353,29 +369,3 @@ class _SessionTile extends StatelessWidget {
   }
 }
 
-/// There is no `name` field anywhere yet — the account's email (decoded
-/// from the stored access token's own JWT, [SecureTokenStorage.readAccountEmail])
-/// is the only real identity this app has on-device. Both derive from its
-/// local-part (before `@`), split on `.`/`_`/`-`: "wagner.duarte@x.com" ->
-/// name "Wagner Duarte", initials "WD". A real display name belongs to the
-/// Configurações unit (prototype: "avatar with editable name/e-mail") —
-/// this is a stand-in until that unit wires one in.
-List<String> _emailNameWords(String email) => email
-    .split('@')
-    .first
-    .split(RegExp(r'[._-]+'))
-    .where((w) => w.isNotEmpty)
-    .toList();
-
-String _displayNameFromEmail(String email) {
-  final words = _emailNameWords(email);
-  if (words.isEmpty) return email;
-  return words.map((w) => '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
-}
-
-String _initialsFromEmail(String email) {
-  final words = _emailNameWords(email);
-  if (words.isEmpty) return '?';
-  if (words.length == 1) return words.first.substring(0, 1).toUpperCase();
-  return (words[0].substring(0, 1) + words[1].substring(0, 1)).toUpperCase();
-}

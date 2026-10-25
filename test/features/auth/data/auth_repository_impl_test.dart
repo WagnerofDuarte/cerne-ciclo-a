@@ -118,4 +118,22 @@ void main() {
       );
     });
   });
+
+  group('logout', () {
+    test('200 response (any ok value) returns Right(unit)', () async {
+      when(() => remoteDataSource.logout()).thenAnswer((_) async => const Right(unit));
+
+      final result = await repository.logout();
+
+      expect(result, const Right<Failure, Unit>(unit));
+    });
+
+    test('does not call SecureTokenStorage/SessionRepository.clear() itself', () async {
+      when(() => remoteDataSource.logout()).thenAnswer((_) async => const Right(unit));
+
+      await repository.logout();
+
+      verifyNever(() => tokenStorage.delete());
+    });
+  });
 }

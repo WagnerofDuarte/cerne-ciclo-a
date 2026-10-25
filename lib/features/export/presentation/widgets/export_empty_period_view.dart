@@ -15,25 +15,28 @@ class ExportEmptyPeriodView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.inbox_outlined,
-            size: DesignTokens.spacing2xl,
-            color: DesignTokens.colorTextSecondary,
-          ),
-          const SizedBox(height: DesignTokens.spacingMd),
           const Text(
             'Nenhum registro nesse período.',
-            style: DesignTokens.textTitleSm,
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: DesignTokens.spacingSm),
-          const Text(
-            'Ajuste o filtro de período em "Meus Registros" e tente novamente.',
             style: DesignTokens.textBodyMd,
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: DesignTokens.spacingLg),
-          TextButton(onPressed: onClosePressed, child: const Text('Fechar')),
+          const SizedBox(height: DesignTokens.spacingSm),
+          Text(
+            'Ajuste o filtro de período e tente de novo.',
+            style: DesignTokens.textBodyMd.copyWith(color: DesignTokens.colorTextSecondary),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: DesignTokens.spacingMd),
+          TextButton(
+            onPressed: onClosePressed,
+            child: Text(
+              'Fechar',
+              style: DesignTokens.textMonoCaption.copyWith(
+                fontSize: 11,
+                color: DesignTokens.colorTextSecondary,
+              ),
+            ),
+          ),
         ],
       ),
     );

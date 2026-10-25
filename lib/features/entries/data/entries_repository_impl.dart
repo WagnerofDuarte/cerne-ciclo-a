@@ -145,6 +145,12 @@ class EntriesRepositoryImpl implements EntriesRepository {
   }
 
   @override
+  Future<void> clearLocalData() async {
+    _cachedEntries.clear();
+    await _localCache.clear();
+  }
+
+  @override
   Future<Either<Failure, Entry>> getById(String id) async {
     final result = await _remoteDataSource.getById(id);
     return result.match(

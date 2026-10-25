@@ -203,6 +203,14 @@ class ChatRepositoryImpl implements ChatRepository {
     });
   }
 
+  @override
+  Future<void> clearLocalData() async {
+    _cachedSessions = [];
+    _cachedMessages.clear();
+    _savedMessageEntryIds = {};
+    await _localCache.clear();
+  }
+
   // Exactly one retry. If it also comes back `AuthExpiredFailure` (a
   // pathological double-expiry), that is returned as-is — no second refresh
   // attempt, no loop (same shape EntriesRepositoryImpl already uses).

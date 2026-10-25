@@ -46,6 +46,18 @@ import 'package:cerne/features/session/data/session_repository_impl.dart';
 import 'package:cerne/features/session/domain/repositories/session_repository.dart';
 import 'package:cerne/features/session/domain/usecases/check_session_usecase.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
+import 'package:cerne/features/settings/data/account_deletion_remote_data_source.dart';
+import 'package:cerne/features/settings/data/account_deletion_repository_impl.dart';
+import 'package:cerne/features/settings/data/account_profile_local_cache.dart';
+import 'package:cerne/features/settings/data/account_profile_repository_impl.dart';
+import 'package:cerne/features/settings/data/account_settings_remote_data_source.dart';
+import 'package:cerne/features/settings/data/dashboard_remote_data_source.dart';
+import 'package:cerne/features/settings/data/dashboard_repository_impl.dart';
+import 'package:cerne/features/settings/domain/repositories/account_deletion_repository.dart';
+import 'package:cerne/features/settings/domain/repositories/account_profile_repository.dart';
+import 'package:cerne/features/settings/domain/repositories/dashboard_repository.dart';
+import 'package:cerne/features/settings/domain/usecases/save_settings_biometric_preference_usecase.dart';
+import 'package:cerne/features/settings/presentation/bloc/settings_bloc.dart';
 import 'package:cerne/features/vault/data/account/biometrics_preference_remote_data_source.dart';
 import 'package:cerne/features/vault/data/account/biometrics_preference_repository_impl.dart';
 import 'package:cerne/features/vault/data/local_auth_biometric_data_source.dart';
@@ -121,6 +133,8 @@ void setupServiceLocator() {
     () => AuthBloc(
       loginUseCase: getIt<LoginUseCase>(),
       signUpUseCase: getIt<SignUpUseCase>(),
+      entriesRepository: getIt<EntriesRepository>(),
+      chatRepository: getIt<ChatRepository>(),
     ),
   );
 
@@ -301,6 +315,54 @@ void setupServiceLocator() {
       confirmEntrySaveUseCase: getIt<ConfirmEntrySaveUseCase>(),
       photoCaptureRepository: getIt<PhotoCaptureRepository>(),
       recognizePhotoUseCase: getIt<RecognizePhotoUseCase>(),
+    ),
+  );
+
+  // Settings (P-RF09)
+  getIt.registerLazySingleton<DashboardRemoteDataSource>(
+    () => DashboardRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<DashboardRepository>(
+    () => DashboardRepositoryImpl(
+      getIt<DashboardRemoteDataSource>(),
+      sessionRepository: getIt<SessionRepository>(),
+    ),
+  );
+  getIt.registerLazySingleton<AccountSettingsRemoteDataSource>(
+    () => AccountSettingsRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<AccountProfileLocalCache>(AccountProfileLocalCache.new);
+  getIt.registerLazySingleton<AccountProfileRepository>(
+    () => AccountProfileRepositoryImpl(
+      getIt<AccountSettingsRemoteDataSource>(),
+      sessionRepository: getIt<SessionRepository>(),
+      localCache: getIt<AccountProfileLocalCache>(),
+    ),
+  );
+  getIt.registerLazySingleton<AccountDeletionRemoteDataSource>(
+    () => AccountDeletionRemoteDataSource(getIt<ApiClient>()),
+  );
+  getIt.registerLazySingleton<AccountDeletionRepository>(
+    () => AccountDeletionRepositoryImpl(getIt<AccountDeletionRemoteDataSource>()),
+  );
+  getIt.registerLazySingleton<SaveSettingsBiometricPreferenceUseCase>(
+    () => SaveSettingsBiometricPreferenceUseCase(
+      biometricsPreferenceRepository: getIt<BiometricsPreferenceRepository>(),
+      vaultRepository: getIt<VaultRepository>(),
+    ),
+  );
+  getIt.registerFactory<SettingsBloc>(
+    () => SettingsBloc(
+      dashboardRepository: getIt<DashboardRepository>(),
+      accountProfileRepository: getIt<AccountProfileRepository>(),
+      accountDeletionRepository: getIt<AccountDeletionRepository>(),
+      authRepository: getIt<AuthRepository>(),
+      sessionRepository: getIt<SessionRepository>(),
+      saveSettingsBiometricPreferenceUseCase: getIt<SaveSettingsBiometricPreferenceUseCase>(),
+      vaultRepository: getIt<VaultRepository>(),
+      entriesRepository: getIt<EntriesRepository>(),
+      chatRepository: getIt<ChatRepository>(),
+      secureTokenStorage: getIt<SecureTokenStorage>(),
     ),
   );
 }

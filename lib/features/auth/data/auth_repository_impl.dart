@@ -41,6 +41,9 @@ class AuthRepositoryImpl implements AuthRepository {
     return _persistOnSuccess(result);
   }
 
+  @override
+  Future<Either<Failure, Unit>> logout() => _remoteDataSource.logout();
+
   Future<Either<Failure, Session>> _persistOnSuccess(
     Either<Failure, Session> result,
   ) async {

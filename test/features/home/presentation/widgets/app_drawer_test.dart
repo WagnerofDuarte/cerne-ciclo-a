@@ -13,6 +13,7 @@ import 'package:cerne/features/home/presentation/widgets/app_drawer.dart';
 import 'package:cerne/features/session/domain/entities/session_status.dart';
 import 'package:cerne/features/session/presentation/bloc/session_bloc.dart';
 import 'package:cerne/features/session/presentation/bloc/session_event.dart';
+import 'package:cerne/features/settings/domain/repositories/account_profile_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,6 +27,8 @@ class MockChatSessionsBloc extends MockBloc<ChatSessionsEvent, ChatSessionsState
 class MockSessionBloc extends MockBloc<SessionEvent, SessionStatus> implements SessionBloc {}
 
 class MockSecureTokenStorage extends Mock implements SecureTokenStorage {}
+
+class MockAccountProfileRepository extends Mock implements AccountProfileRepository {}
 
 ChatSession _buildSession({required String id, required String title}) => ChatSession(
   id: id,
@@ -59,6 +62,11 @@ void main() {
     final tokenStorage = MockSecureTokenStorage();
     when(() => tokenStorage.readAccountEmail()).thenAnswer((_) async => 'wagner.duarte@x.com');
     getIt.registerLazySingleton<SecureTokenStorage>(() => tokenStorage);
+
+    final accountProfileRepository = MockAccountProfileRepository();
+    when(() => accountProfileRepository.readCachedDisplayName())
+        .thenAnswer((_) async => null);
+    getIt.registerLazySingleton<AccountProfileRepository>(() => accountProfileRepository);
   });
 
   tearDown(getIt.reset);

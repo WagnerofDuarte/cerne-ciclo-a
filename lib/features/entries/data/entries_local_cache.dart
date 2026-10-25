@@ -42,6 +42,10 @@ class EntriesLocalCache {
     return _storage.write(key: _key, value: encoded);
   }
 
+  /// Deletes this cache's one key — part of account deletion's "any other
+  /// locally held user data" clear (FR-019, research.md R9).
+  Future<void> clear() => _storage.delete(key: _key);
+
   Map<String, dynamic> _toJson(Entry e) => {
     'id': e.id,
     'content': e.content,

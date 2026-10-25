@@ -6,6 +6,8 @@ import 'package:cerne/features/auth/domain/usecases/sign_up_usecase.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_bloc.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_event.dart';
 import 'package:cerne/features/auth/presentation/bloc/auth_state.dart';
+import 'package:cerne/features/chat/domain/repositories/chat_repository.dart';
+import 'package:cerne/features/entries/domain/repositories/entries_repository.dart';
 import 'package:cerne/features/session/domain/entities/session.dart';
 import 'package:fpdart/fpdart.dart';
 import 'package:mocktail/mocktail.dart';
@@ -15,9 +17,15 @@ class MockLoginUseCase extends Mock implements LoginUseCase {}
 
 class MockSignUpUseCase extends Mock implements SignUpUseCase {}
 
+class MockEntriesRepository extends Mock implements EntriesRepository {}
+
+class MockChatRepository extends Mock implements ChatRepository {}
+
 void main() {
   late MockLoginUseCase loginUseCase;
   late MockSignUpUseCase signUpUseCase;
+  late MockEntriesRepository entriesRepository;
+  late MockChatRepository chatRepository;
 
   const email = 'person@example.com';
   const password = 'correct-horse';
@@ -33,9 +41,18 @@ void main() {
   setUp(() {
     loginUseCase = MockLoginUseCase();
     signUpUseCase = MockSignUpUseCase();
+    entriesRepository = MockEntriesRepository();
+    chatRepository = MockChatRepository();
+    when(() => entriesRepository.clearLocalData()).thenAnswer((_) async {});
+    when(() => chatRepository.clearLocalData()).thenAnswer((_) async {});
   });
 
-  AuthBloc buildBloc() => AuthBloc(loginUseCase: loginUseCase, signUpUseCase: signUpUseCase);
+  AuthBloc buildBloc() => AuthBloc(
+        loginUseCase: loginUseCase,
+        signUpUseCase: signUpUseCase,
+        entriesRepository: entriesRepository,
+        chatRepository: chatRepository,
+      );
 
   group('LoginSubmitted', () {
     blocTest<AuthBloc, AuthState>(
@@ -113,6 +130,36 @@ void main() {
         verify(() => loginUseCase(email: email, password: password)).called(1);
       },
     );
+
+    blocTest<AuthBloc, AuthState>(
+      'a successful login clears this device\'s entries/chat cache so a '
+      'previous account\'s data never leaks into the next one',
+      setUp: () {
+        when(() => loginUseCase(email: email, password: password))
+            .thenAnswer((_) async => Right(session));
+      },
+      build: buildBloc,
+      act: (bloc) => bloc.add(const LoginSubmitted(email: email, password: password)),
+      verify: (_) {
+        verify(() => entriesRepository.clearLocalData()).called(1);
+        verify(() => chatRepository.clearLocalData()).called(1);
+      },
+    );
+
+    blocTest<AuthBloc, AuthState>(
+      'a failed login never clears the entries/chat cache',
+      setUp: () {
+        const failure = AuthInvalidFailure(message: 'wrong credentials', requestId: 'r1');
+        when(() => loginUseCase(email: email, password: password))
+            .thenAnswer((_) async => const Left(failure));
+      },
+      build: buildBloc,
+      act: (bloc) => bloc.add(const LoginSubmitted(email: email, password: password)),
+      verify: (_) {
+        verifyNever(() => entriesRepository.clearLocalData());
+        verifyNever(() => chatRepository.clearLocalData());
+      },
+    );
   });
 
   group('SignUpSubmitted', () {
@@ -181,6 +228,21 @@ void main() {
       ],
       verify: (_) {
         verify(() => signUpUseCase(email: email, password: password)).called(1);
+      },
+    );
+
+    blocTest<AuthBloc, AuthState>(
+      'a new account signing up on this device never inherits a prior '
+      'account\'s entries/chat cache',
+      setUp: () {
+        when(() => signUpUseCase(email: email, password: password))
+            .thenAnswer((_) async => Right(session));
+      },
+      build: buildBloc,
+      act: (bloc) => bloc.add(const SignUpSubmitted(email: email, password: password)),
+      verify: (_) {
+        verify(() => entriesRepository.clearLocalData()).called(1);
+        verify(() => chatRepository.clearLocalData()).called(1);
       },
     );
   });

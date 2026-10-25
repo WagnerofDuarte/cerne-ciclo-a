@@ -25,6 +25,14 @@ class AuthRemoteDataSource {
     return _submit('auth-login', email: email, password: password);
   }
 
+  /// `POST /auth/logout` (`auth-logout`), empty body. Returns `Right(unit)`
+  /// on any 200 regardless of the response's `ok` value
+  /// (contracts/account-session-actions.md).
+  Future<Either<Failure, Unit>> logout() async {
+    final result = await _apiClient.call('auth-logout', method: 'POST');
+    return result.map((_) => unit);
+  }
+
   Future<Either<Failure, Session>> _submit(
     String function, {
     required String email,

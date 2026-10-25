@@ -100,6 +100,17 @@ class ChatLocalCache {
     return _storage.write(key: _savedMessageEntryIdsKey, value: jsonEncode(ids));
   }
 
+  /// Deletes all four of this cache's keys — part of account deletion's
+  /// "any other locally held user data" clear (FR-019, research.md R9).
+  Future<void> clear() async {
+    await Future.wait([
+      _storage.delete(key: _sessionsKey),
+      _storage.delete(key: _messagesKey),
+      _storage.delete(key: _lastActiveKey),
+      _storage.delete(key: _savedMessageEntryIdsKey),
+    ]);
+  }
+
   Map<String, dynamic> _sessionToJson(ChatSession s) => {
     'id': s.id,
     'title': s.title,

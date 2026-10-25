@@ -86,4 +86,10 @@ abstract class ChatRepository {
     required InsightTriggerType triggerType,
     required String triggerKey,
   });
+
+  /// Wipes [cachedSessions]/[cachedMessages]/`savedEntryIdFor`'s mirror and
+  /// the backing `ChatLocalCache` entirely — part of account deletion's
+  /// "any other locally held user data" clear (FR-019, research.md R9).
+  /// Never called by sign-out.
+  Future<void> clearLocalData();
 }

@@ -47,4 +47,9 @@ abstract class EntriesRepository {
     DateTime? dateTo,
     int limit = 50,
   });
+
+  /// Wipes [cachedEntries] and the backing `EntriesLocalCache` entirely —
+  /// part of account deletion's "any other locally held user data" clear
+  /// (FR-019, research.md R9). Never called by sign-out.
+  Future<void> clearLocalData();
 }

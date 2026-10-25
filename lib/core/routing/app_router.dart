@@ -10,7 +10,9 @@ import 'package:cerne/features/home/presentation/pages/home_chat_shell_page.dart
 import 'package:cerne/features/records/presentation/bloc/records_bloc.dart';
 import 'package:cerne/features/records/presentation/bloc/records_event.dart';
 import 'package:cerne/features/records/presentation/pages/records_page.dart';
-import 'package:cerne/features/settings/presentation/pages/settings_placeholder_page.dart';
+import 'package:cerne/features/settings/presentation/bloc/settings_bloc.dart';
+import 'package:cerne/features/settings/presentation/bloc/settings_event.dart';
+import 'package:cerne/features/settings/presentation/pages/settings_page.dart';
 import 'package:cerne/features/splash/presentation/pages/splash_page.dart';
 import 'package:cerne/features/vault/presentation/bloc/vault_bloc.dart';
 import 'package:cerne/features/vault/presentation/pages/vault_page.dart';
@@ -75,7 +77,10 @@ final GoRouter appRouter = GoRouter(
     ),
     GoRoute(
       path: AppRoutes.settings,
-      builder: (context, state) => const SettingsPlaceholderPage(),
+      builder: (context, state) => BlocProvider<SettingsBloc>(
+        create: (_) => getIt<SettingsBloc>()..add(const SettingsOpened()),
+        child: const SettingsPage(),
+      ),
     ),
   ],
 );
